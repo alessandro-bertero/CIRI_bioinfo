@@ -14,7 +14,11 @@ hedgelab/rstudio-hedgelab:iPS2seq_new_cellranger9
 These Images can run cellranger (either cellranger 7 or cellranger 9) on bash and the R codes on Rstudio server.
 
 ```docker run -d -itv /path/to/shared/folder:/scratch --privileged=true -p 8080:8787 --name container_name hedgelab/rstudio-hedgelab:iPS2seq_new_cellranger7```
+
+
 ```docker exec -idt container_name rstudio-server start```
+
+
 then go on the browser http://localhost:8080/
 
 
