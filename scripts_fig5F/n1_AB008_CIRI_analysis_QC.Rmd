@@ -1,0 +1,604 @@
+---
+title: "n1 AB008 CIRI: QC of bulk data"
+author: "Elisa Balmas PhD"
+date: "2024-08-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up environment
+
+```{r}
+library(tidyr)
+library(stringr)
+library(grid)
+library(viridis)
+library(ggthemes)
+library(dplyr)
+library(tidyverse)
+library(ggsignif)
+library(umap)
+library(heatmap3)
+library(plyr)
+library(edgeR)
+library(compareGroups)
+library(dbscan)
+library(reshape2)
+library(scran)
+library(Matrix)
+library(fgsea)
+library(msigdbr)
+library(RNAseqQC)
+library(DESeq2)
+library(ensembldb)
+library(tibble)
+library(purrr)
+library(magrittr)
+library(ggplotify)
+library(limma)
+library(Glimma)
+library(topGO)
+library(org.Hs.eg.db)
+#library(org.Mm.eg.db)
+library(ggrepel)
+library(igraph)
+library(readxl)
+library(clusterProfiler)
+library(enrichplot)
+library(SeuratObject)
+library(Seurat)
+library(pathview)
+library(pheatmap)
+library(ggplot2)
+library(reshape2)
+library(WGCNA)
+library(TCseq)
+library(readr)
+library(ADImpute)
+
+
+library(ggplot2); library(reshape2); theme_set(theme_bw(26) + theme(panel.grid.major = element_blank(), 
+                                                                    panel.grid.minor = element_blank()) +
+                                                 theme(legend.key = element_blank()))
+update_geom_defaults("point", aes(size = 4))
+
+#setwd("/home/ebalmas/scpHUB/projects/H001AS7_iKDseq_10X_4tp_monocle/analysis_EB")
+
+# Session options
+options(stringsAsFactors = FALSE)
+set.seed(12345)
+
+# Set up the ggplot default params
+theme_set(theme_bw(12) + 
+          theme(panel.grid.major = element_blank(), 
+                panel.grid.minor = element_blank(),
+                plot.title = element_text(size=15, face="bold", margin = margin(10,0,10,0)),
+                axis.text.x = element_text(angle=45, hjust = 1)))
+
+
+# Set up filename prefixes and output folders with the data
+dir.create("Output")
+#dir.create(file.path("Output","Fig5F_input_folder"))
+
+
+dir.create(file.path("Output","QC"))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d")))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "csv"))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "R_objects"))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "QC_plots"))
+
+dir.create(file.path("Output","deseq2"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d")))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "dotplot"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "R_objects"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "csv"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "gene_expression"))
+
+
+fname_Fig5F_input_folder <- file.path("Fig5F_input_folder")
+
+#set up folder path QC
+fname_prefix_R_QC <- file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "R_objects", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_csv_QC<-file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "csv", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_QC_QC <- file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "QC_plots", 
+                               format(Sys.Date(), "%y%m%d"))
+
+
+fname_prefix_dotplot_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "dotplot", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_R_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "R_objects", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_csv_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "csv", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_gene_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "gene_expression", 
+                               format(Sys.Date(), "%y%m%d"))
+
+
+#okabe_tab <- read_excel("Fig5F_input_folder/color_scale.xlsx")
+#okabe_pal=okabe_tab$hex
+
+okabe_pal=c("#E69F00","#56B4E9","#009E73","#f0E442","#0072B2","#D55E00","#CC79A7","#000000")
+
+
+pal <- c("#000000","#004949","#009292","#ff6db6","#ffb6db",
+         "#490092","#006ddb","#b66dff","#6db6ff","#b6dbff",
+         "#920000","#924900","#db6d00","#24ff24","#ffff6d")
+```
+##### load count data
+##nb eliminate OPTIOX_2 since low reads
+```{r}
+# setup for reading in STAR counts files
+counts_dir   <- paste0(fname_Fig5F_input_folder,"/counts/")  # folder where your *.out.tab files live
+pattern      <- "ReadsPerGene\\.out\\.tab$"
+strandedness <- "unstranded"            # choose: "unstranded" (V4), "forward" (V2), or "reverse" (V3)
+# --------------------------------
+
+col_pick <- switch(strandedness,
+                   "forward"    = 2,     # column V2 in STAR file
+                   "reverse"    = 3,     # column V3 in STAR file
+                   "unstranded" = 4)     # column V4 in STAR file
+
+files <- list.files(counts_dir, pattern = pattern, full.names = TRUE)
+stopifnot(length(files) > 0)
+
+# helper to make a nice sample name from filename (e.g., "CTCF_ctr_1" from "CTCF_ctr_1ReadsPerGene.out.tab")
+sample_name_from_file <- function(fp) {
+  bn <- basename(fp)
+  sub("ReadsPerGene\\.out\\.tab$", "", bn)  # strip the STAR suffix
+}
+
+# read one STAR ReadsPerGene.out.tab and return a data.frame: gene_id + one sample column
+read_one_counts <- function(fp) {
+  # STAR puts 4 summary rows on top; real genes start from row 5
+  x <- read_tsv(fp, col_names = FALSE, show_col_types = FALSE)
+  x <- x[-(1:4), , drop = FALSE]
+  # V1 = gene_id, V2 = stranded-forward, V3 = stranded-reverse, V4 = unstranded
+  out <- x[, c(1, col_pick)]
+  names(out) <- c("gene_id", sample_name_from_file(fp))
+  out
+}
+
+# read and merge all samples by gene_id
+counts_list <- lapply(files, read_one_counts)
+
+counts_df <- Reduce(function(a, b) full_join(a, b, by = "gene_id"), counts_list) |>
+  arrange(gene_id)
+counts_df=counts_df%>%dplyr::filter(!gene_id %in% c("NANOGxt","OPTetR","MYOD1","RTTA"))#eliminate gene names not needed
+gene_id=counts_df$gene_id
+
+non_ens_genes <- counts_df$gene_id[!grepl("^ENS", counts_df$gene_id)]###genes added to the reference
+
+# turn into a matrix with gene_id as rownames
+counts_mat <- counts_df
+rownames(counts_mat) <- counts_mat$gene_id
+genes_mat=counts_mat$gene_id
+counts_mat$gene_id <- NULL
+counts_mat <- as.data.frame(counts_mat)
+rownames(counts_mat)=genes_mat
+
+samp_ID=colnames(counts_mat)
+
+meta=read_excel(paste0(getwd(),"/Fig5F_input_folder/table.xlsx"))
+#eliminate from meta line meta$sample_ID when == "OPTIOX_2
+meta=meta%>%dplyr::filter(sample_ID!="OPTIOX_2")%>%dplyr::filter(sample_ID!="CIRI_4")
+
+
+########this chunk it to make sure the order is the same between meta and counts, and to eliminate samples that are in one but not the other.
+# --- ALIGN meta and counts by sample_ID (CRITICAL) ---
+# 1) keep only samples present in counts
+meta2 <- meta %>% dplyr::filter(sample_ID %in% colnames(counts_mat))
+# 2) reorder meta to match counts column order
+meta2 <- meta2 %>% dplyr::slice(match(colnames(counts_mat), sample_ID))
+# 3) drop samples that are in counts but not in meta (match() -> NA)
+keep <- !is.na(meta2$sample_ID)
+counts_mat <- counts_mat[, keep, drop = FALSE]
+meta2 <- meta2[keep, , drop = FALSE]
+# 4) make DESeq2/RNAseqQC-friendly rownames
+meta2 <- as.data.frame(meta2)
+rownames(meta2) <- meta2$sample_ID
+# 5) sanity check
+stopifnot(identical(colnames(1counts_mat), rownames(meta2)))
+# overwrite meta with aligned version for the rest of the script
+meta <- meta2
+rm(meta2, keep)
+
+
+gene_length <- read.delim(paste0(getwd(),"/Fig5F_input_folder/gene_length.txt"))
+gene_length=gene_length%>%dplyr::filter(!gene %in% c("NANOGxt","OPTetR","MYOD1","RTTA"))#eliminate gene names not needed
+
+Rdata_filename = paste0(fname_prefix_R_QC, "_counts_un.RData")
+save(counts_mat,gene_id,non_ens_genes,samp_ID,meta,gene_length,
+     file = Rdata_filename)
+
+```
+
+####create geneInfo for QC plots
+```{r}
+# 1) define your organism — here human, but can switch to mouse
+organism <- "human"
+
+if (organism == "human") {
+  dataset <- "hsapiens_gene_ensembl"
+} else if (organism == "mouse") {
+  dataset <- "mmusculus_gene_ensembl"
+} else {
+  stop("organism must be 'human' or 'mouse'")
+}
+
+# 2) connect to Ensembl
+mart <- biomaRt::useMart("ensembl", dataset = dataset) #dataset="hsapiens_gene_ensembl" now it is made so you can switch to mouse if needed
+
+# 3) prepare your Ensembl IDs
+all_ids <- rownames(counts_mat)
+is_ens <- grepl("^ENS[A-Z]*G\\d+", all_ids)
+ens_ids_raw <- all_ids[is_ens]
+ens_ids <- sub("\\.\\d+$", "", ens_ids_raw)   # strip version suffix if present
+custom_ids <- all_ids[!is_ens]                # spike-ins / custom genes
+
+# 4) retrieve gene annotations
+bm <- biomaRt::getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol", "gene_biotype"),
+  filters = "ensembl_gene_id",
+  values = ens_ids,
+  mart = mart
+)
+
+geneInfo <- bm %>%
+  distinct(ensembl_gene_id, .keep_all = TRUE) %>%
+  transmute(
+    gene_ID   = ensembl_gene_id,
+    gene_name = if_else(hgnc_symbol == "", ensembl_gene_id, hgnc_symbol),
+    gene_type = gene_biotype
+  )
+
+# 5) Reattach version suffixes so they match your count rownames
+if (any(ens_ids_raw != ens_ids)) {
+  version_map <- data.frame(gene_ID = ens_ids, gene_ID_with_version = ens_ids_raw)
+  geneInfo <- geneInfo %>%
+    right_join(version_map, by = "gene_ID") %>%
+    mutate(gene_ID = gene_ID_with_version) %>%
+    select(-gene_ID_with_version)
+}
+
+# 6) add custom (non-Ensembl) genes
+if (length(custom_ids) > 0) {
+  geneInfo_custom <- tibble(
+    gene_ID   = custom_ids,
+    gene_name = custom_ids,
+    gene_type = "custom"
+  )
+  geneInfo <- bind_rows(geneInfo, geneInfo_custom)
+}
+
+# 7) keep only genes present in your counts and in the same order
+geneInfo <- geneInfo %>%
+  filter(gene_ID %in% all_ids) %>%
+  slice(match(all_ids, gene_ID))
+
+counts_mat=counts_mat[geneInfo$gene_ID,] #keep only the genes with found information
+
+Rdata_filename = paste0(fname_prefix_R_QC, "_counts_un.RData")
+save(counts_mat,gene_id,non_ens_genes,samp_ID,meta,gene_length,geneInfo,
+     file = Rdata_filename)
+
+Rdata_filename = paste0(fname_prefix_csv_QC, "_geneInfo.csv")
+write.csv(geneInfo,Rdata_filename, row.names = FALSE)
+```
+
+###make QC plots
+
+```{r}
+#stopifnot(all(rownames(counts_mat) %in% geneInfo$gene_ID))
+counts_all <- geneInfo %>%
+  left_join(counts_mat %>% rownames_to_column("gene_ID"), by = "gene_ID")
+
+# matrix of just counts and duplicate to make sure not to overwrite
+counts_matrix_all <- counts_mat %>% as.matrix()
+# --------------------------
+# 1) Total counts per sample
+# --------------------------
+all_counts_sum <- colSums(counts_matrix_all, na.rm = TRUE) %>%
+  as.data.frame()
+colnames(all_counts_sum) <- "all_genes_sum"
+all_counts_sum$sample_ID <- rownames(all_counts_sum)
+
+all_counts_sum=all_counts_sum%>%left_join(meta,by="sample_ID")
+
+ggplot(all_counts_sum, aes(x = name_R, y = all_genes_sum,fill = condition)) +
+  geom_bar(stat = "identity") +
+   scale_fill_manual(values = pal) +
+  labs(title = "total number of counts", x = NULL, y = "reads") +
+  theme_bw(12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+ggsave(filename = paste0(fname_prefix_QC_QC, "_", "all_counts_sum.pdf"),
+     width = 10, height = 5)
+# --------------------------
+# 1) Mitocondrial reads per sample
+# --------------------------
+
+mt_genes  <- unique(counts_all$gene_name[grepl("^MT-", counts_all$gene_name)])
+
+mt_counts_matrix <- counts_all %>%
+  dplyr::filter(gene_name %in% mt_genes) %>%
+  dplyr::select(-gene_ID, -gene_name, -gene_type) %>%
+  as.matrix()
+
+mt_sum <- if (nrow(mt_counts_matrix) > 0) {
+  colSums(mt_counts_matrix, na.rm = TRUE)
+} else {
+  setNames(rep(0, ncol(counts_matrix_all)), colnames(counts_matrix_all))
+}
+
+mt_counts_sum <- data.frame(
+  sample_ID    = names(mt_sum),
+  mt_genes_sum = as.numeric(mt_sum),
+  row.names    = NULL
+)
+
+meta_biotypes <- all_counts_sum %>%
+  left_join(mt_counts_sum,  by = "sample_ID") %>%
+  mutate(mt_percentage = 100 * mt_genes_sum / pmax(all_genes_sum, 1))
+
+ggplot(meta_biotypes, aes(x = name_R, y = mt_percentage, fill = condition)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = pal) +
+  labs(title = "percentages of mitochondrial counts", x = NULL, y = "% mito reads") +
+  theme_bw(12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+ggsave(filename = paste0(fname_prefix_QC_QC, "_", "mito_counts.pdf"),
+     width = 10, height = 5)
+
+# ------------------------------------------------
+# 3) Percent contribution by gene biotype
+# ------------------------------------------------
+
+biotype_levels <- sort(unique(counts_all$gene_type))
+
+# for each biotype, compute counts and convert to %
+biotype_perc <- lapply(biotype_levels, function(bt) {
+  m <- counts_all %>%
+    dplyr::filter(gene_type == bt) %>%
+    dplyr::select(-gene_ID, -gene_name, -gene_type) %>%
+    as.matrix()
+  sum_bt <- if (nrow(m) > 0) colSums(m, na.rm = TRUE) else rep(0, ncol(counts_matrix_all))
+  tibble(sample_ID = colnames(counts_matrix_all),
+         biotype   = bt,
+         sum_bt    = as.numeric(sum_bt))
+}) %>%
+  bind_rows() %>%
+  left_join(all_counts_sum, by = "sample_ID") %>%
+  mutate(percentage = 100 * sum_bt / pmax(all_genes_sum, 1)) %>%
+  dplyr::select(sample_ID, biotype, percentage) %>%
+  left_join(meta %>% dplyr::select(sample_ID, condition, replicate), by = "sample_ID")
+
+# drop biotypes with 0% everywhere
+nonzero_biotypes <- biotype_perc %>%
+  group_by(biotype) %>%
+  summarise(total = sum(percentage, na.rm = TRUE), .groups = "drop") %>%
+  filter(total > 0) %>%
+  pull(biotype)
+
+biotype_perc <- biotype_perc %>% filter(biotype %in% nonzero_biotypes)
+
+ggplot(biotype_perc, aes(x = sample_ID, y = percentage, group = biotype, color = biotype)) +
+  geom_line() + geom_point() +
+  labs(title = "biotypes percentage per sample", x = NULL, y = "% of reads") +
+  theme_bw(12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+ggsave(filename = paste0(fname_prefix_QC_QC, "_", "biotype.pdf"),
+     width = 10, height = 5)
+
+ggplot(data=subset(biotype_perc,biotype_perc$biotype=="protein_coding"|biotype_perc$biotype=="custom"), aes(x = sample_ID, y = percentage, group = biotype, color = biotype)) +
+  geom_line() + geom_point() +
+  labs(title = "biotypes percentage per sample", x = NULL, y = "% of reads") +
+  theme_bw(12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+ggsave(filename = paste0(fname_prefix_QC_QC, "_", "biotype_selected.pdf"),
+     width = 10, height = 5)
+
+ggplot(data=subset(biotype_perc,biotype_perc$biotype!="protein_coding"), aes(x = sample_ID, y = percentage, group = biotype, color = biotype)) +
+  geom_line() + geom_point() +
+  labs(title = "biotypes percentage per sample", x = NULL, y = "% of reads") +
+  theme_bw(12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+ggsave(filename = paste0(fname_prefix_QC_QC, "_", "biotype_not_PT.pdf"),
+     width = 10, height = 5)
+
+Rdata_filename = paste0(fname_prefix_R_QC, "_QC.RData")
+save(counts_mat,meta_biotypes,meta,geneInfo,biotype_perc,
+     file = Rdata_filename)
+
+```
+###create deseq object
+###filter counts to only protein coding genes and only meaningful genes (non zero variance)
+
+```{r}
+ #select protein coding genes
+counts_pc = counts_all %>% dplyr::filter(gene_type == "protein_coding" | gene_type == "custom")
+pc= counts_pc$gene_ID
+counts_std = counts_pc %>% dplyr::select(- colnames(geneInfo))
+rownames(counts_std)=pc
+dds = make_dds(counts = counts_std, metadata = meta, ah_record = "AH89426")#human
+
+plot_library_complexity(dds)
+plot_gene_detection(dds)
+
+Rdata_filename = paste0(fname_prefix_R_QC, "_counts_protein_coding.RData")
+save(counts_std,counts_pc,pc,non_ens_genes,samp_ID,meta,gene_length,geneInfo,dds,
+     file = Rdata_filename)
+
+#gene filtering
+  replicates = c()
+  for(i in unique(meta$condition)){
+    meta_i = meta %>% dplyr::filter(condition == i);
+    replicates = append(replicates, length(rownames(meta_i)))
+  }
+  n = min(replicates)
+  
+  dds = filter_genes(dds, min_count = 3, min_rep = n)
+  #dds <- dds[ !rownames(dds) %in% c("COM_K", "dCAS9", "MCP_PH_TagBFP", "OPTetR"), ]
+  dds <- dds[ !rownames(dds) %in% c("NANOGxt","OPTetR","MYOD1","RTTA"), ]
+
+  
+  deseq_counts = dds@assays@data@listData[["counts"]]#it includes also custom genes #row counts which correspond to dds after filtering
+  selected_IDs = c(rownames(deseq_counts), custom_ids)
+  geneInfo_f = geneInfo %>% dplyr::filter(gene_ID %in% selected_IDs)
+  counts_f = counts_pc %>% dplyr::filter(gene_ID %in% geneInfo_f$gene_ID) 
+  rownames(counts_f) = counts_f$gene_ID
+  counts_matrix_f = counts_f %>% dplyr::select(- colnames(geneInfo))
+  
+  rowdata = as.data.frame(dds@rowRanges@elementMetadata)
+  rowdata$gene_ID = rownames(deseq_counts)
+  genehgnc=rowdata$gene_name
+  rowdata = rowdata %>% dplyr::select(-gene_name)
+  counts_f = counts_f %>% dplyr::left_join(rowdata, by = "gene_ID")
+  
+Rdata_filename = paste0(fname_prefix_R_QC, "_counts_protein_coding_filtered.RData")
+save(deseq_counts,geneInfo_f,counts_f,selected_IDs,meta,gene_length,dds,
+     file = Rdata_filename)
+
+#Variance stabilization
+  vsd = vst(dds)
+  mean_sd_plot(vsd)
+  plot_ma=plot_sample_MAs(vsd, group = "name")
+  plot_ma
+  
+  for(i in 1:length(plot_ma)) {as.ggplot(plot_ma[[i]]); ggsave(filename = paste0(fname_prefix_dotplot_deseq2,"/", plot_ma[[i]][["labels"]][["title"]], ".pdf"),width = 6, height = 4)}
+  
+  
+as.ggplot(plot_sample_clustering(vsd, n_feats = 1000, anno_vars = c("name", "replicate"), distance = "pearson")) + ggtitle(" Pearson correlation before batch effect correction") + theme(plot.title = element_text(face = "bold"))
+  ggsave(filename = paste0(fname_prefix_QC_QC, "_", "pearson.pdf"),
+     width = 6, height =4)
+  
+plot_pca_scatters(vsd, n_PCs = 2,  color_by = "name", shape_by = "replicate",show_var_exp=T)#batch correction not needed
+#plot_pca(vsd, show_plot = T, n_feats = 1000) #other possible way to get results
+ggsave(filename = paste0(fname_prefix_QC_QC, "_", "PCA.pdf"),
+     width = 5, height =4)
+  
+pca_res = plot_pca(vsd, show_plot = FALSE, n_feats = 1000)
+pca_variability = as.data.frame(pca_res[["var_exp"]])
+colnames(pca_variability) = "pca_var"
+pca_variability$pca = c(1:length(rownames(meta)))
+ggplot(pca_variability, aes(x = pca, y = pca_var)) + geom_point()##from 1-3 PCA are meaningful #klnee plot
+  
+PCAdata=as.data.frame(pca_res[["data"]])
+PCA_loadings=as.data.frame(pca_res[["loadings"]])
+
+
+p=plot_pca_scatters(vsd, n_PCs = 2,  color_by = "name", shape_by = "replicate",show_var_exp=T)#batch correction not needed
+p+labs(x = paste0("PC1","(",pca_variability[1,1],"%)"), y = paste0("PC2","(",pca_variability[2,1],"%)"), title = "PCA plot") 
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "PCA.pdf"),
+     width = 5, height =4)
+
+Rdata_filename = paste0(fname_prefix_R_QC, "_dds_PCA.RData")
+save(deseq_counts,geneInfo_f,counts_f,selected_IDs,meta,gene_length,dds,PCAdata,PCA_loadings,vsd,dds,pca_res,pca_variability,
+     file = Rdata_filename)
+
+Rdata_filename = paste0(fname_prefix_R_deseq2, "_dds_PCA.RData")
+save(deseq_counts,geneInfo_f,counts_f,selected_IDs,meta,gene_length,dds,PCAdata,PCA_loadings,vsd,dds,pca_res,pca_variability,
+     file = Rdata_filename)
+  
+```
+
+###gene lenght file from GTF
+
+```{r}
+gene_length_initial=gene_length
+
+library(GenomicRanges)
+library(rtracklayer)
+library(dplyr)
+
+# Path to your GTF file
+gtf_file <- "/Users/elisabalmaselisabalmas/Library/CloudStorage/GoogleDrive-elisa.balmas@unito.it/Shared drives/MBC-HEDGe_EB/EB002_B8_and_GERALT/AB008_bulk_muscle/Fig5F_input_folder/Homo_sapiens.GRCh38.112_AB008.gtf"  # <-- update with your actual GTF path
+# Import GTF as GRanges
+gtf <- import(gtf_file)
+rownames(counts_f)=counts_f$gene_ID
+filtered_gene_ids=row.names(counts_f)
+
+gtf_filtered <- gtf[gtf$gene_id %in% filtered_gene_ids]
+gene_info_filtered <- geneInfo[geneInfo$gene_ID %in% filtered_gene_ids,]
+
+# Extract exons
+exons <- gtf_filtered[gtf_filtered$type == "exon"]
+
+# Group exons by gene and reduce overlapping regions
+exons_by_gene <- split(exons, exons$gene_id)
+gene_exon_lengths <- sum(width(reduce(exons_by_gene)))  # non-overlapping exon lengths
+
+# Make gene length table
+gene_length_df <- data.frame(
+  gene = filtered_gene_ids,
+  length_bp = as.numeric(gene_exon_lengths[filtered_gene_ids])  # NA if gene had no exons
+)
+
+```
+
+###calculate TPM and RPKM
+
+```{r}
+
+#gene_length <- read_delim("Fig5F_input_folder/gene_length.txt", 
+  #                        delim = "\t", escape_double = FALSE, trim_ws = TRUE) %>%
+ # as.data.frame() %>%
+  #mutate(length_bp = as.numeric(merged)) %>%
+  #filter(!is.na(length_bp) & length_bp > 0)
+
+gene_length=gene_length_df
+
+# Select Ensembl IDs from geneInfo and join directly to gene_length
+len_map <- geneInfo_f %>%
+  select(gene_ID) %>% #ensambleID
+  left_join(gene_length, by = c("gene_ID" = "gene")) %>%
+  filter(!is.na(length_bp) & length_bp > 0) %>%
+  distinct(gene_ID, .keep_all = TRUE)
+
+# Filter to genes present in count matrix and keep row order
+len_map <- len_map %>%
+  filter(gene_ID %in% rownames(counts_matrix_f)) %>%
+  arrange(match(gene_ID, rownames(counts_matrix_f)))
+
+# Subset count matrix
+counts_for_tpm <- counts_matrix_f[len_map$gene_ID, ]
+length_kb <- len_map$length_bp / 1000
+
+# --- TPM Calculation ---
+rpk <- sweep(as.matrix(counts_for_tpm), 1, length_kb, "/")  # Reads per kilobase
+scaling <- colSums(rpk, na.rm = TRUE) / 1e6                 # per million scaling
+counts_tpm <- sweep(rpk, 2, scaling, "/") %>% as.data.frame()
+rownames(counts_tpm) <- len_map$gene_ID
+
+# --- RPKM Calculation ---
+library_sizes <- colSums(counts_for_tpm)                    # Total counts per sample
+rpkm <- sweep(as.matrix(counts_for_tpm), 2, library_sizes / 1e6, "/")  # per million
+rpkm <- sweep(rpkm, 1, length_kb, "/") %>% as.data.frame()             # per kb
+rownames(rpkm) <- len_map$gene_ID
+
+"dCAS9" %in% rownames(rpkm)#test you have your genes of interest
+
+Rdata_filename = paste0(fname_prefix_R_QC, "_dds_PCA.RData")
+save(deseq_counts,geneInfo_f,counts_f,selected_IDs,meta,gene_length_df,dds,PCAdata,PCA_loadings,vsd,dds,pca_res,pca_variability,counts_tpm,rpkm,rpk,
+     file = Rdata_filename)
+```
+
+
+
+
+
+
+

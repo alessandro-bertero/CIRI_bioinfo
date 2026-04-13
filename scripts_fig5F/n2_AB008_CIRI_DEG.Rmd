@@ -1,0 +1,2122 @@
+---
+title: "n2 AB008: DEG and gene analysis"
+author: "Elisa Balmas PhD"
+date: "2025-08-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up environment
+
+```{r}
+library(tidyr)
+library(stringr)
+library(grid)
+library(viridis)
+library(ggthemes)
+library(dplyr)
+library(tidyverse)
+library(ggsignif)
+library(umap)
+library(heatmap3)
+library(plyr)
+library(edgeR)
+library(compareGroups)
+library(dbscan)
+library(reshape2)
+library(scran)
+library(Matrix)
+library(fgsea)
+library(msigdbr)
+library(RNAseqQC)
+library(DESeq2)
+library(ensembldb)
+library(tibble)
+library(purrr)
+library(magrittr)
+library(ggplotify)
+library(limma)
+library(Glimma)
+library(topGO)
+library(org.Hs.eg.db)
+#library(org.Mm.eg.db)
+library(ggrepel)
+library(igraph)
+library(readxl)
+library(clusterProfiler)
+library(enrichplot)
+library(SeuratObject)
+library(Seurat)
+library(pathview)
+library(pheatmap)
+library(ggplot2)
+library(reshape2)
+library(WGCNA)
+library(TCseq)
+library(readr)
+library(ADImpute)
+
+
+library(ggplot2); library(reshape2); theme_set(theme_bw(26) + theme(panel.grid.major = element_blank(), 
+                                                                    panel.grid.minor = element_blank()) +
+                                                 theme(legend.key = element_blank()))
+update_geom_defaults("point", aes(size = 4))
+
+#setwd("/home/ebalmas/scpHUB/projects/H001AS7_iKDseq_10X_4tp_monocle/analysis_EB")
+
+# Session options
+options(stringsAsFactors = FALSE)
+set.seed(12345)
+
+# Set up the ggplot default params
+theme_set(theme_bw(12) + 
+          theme(panel.grid.major = element_blank(), 
+                panel.grid.minor = element_blank(),
+                plot.title = element_text(size=15, face="bold", margin = margin(10,0,10,0)),
+                axis.text.x = element_text(angle=45, hjust = 1)))
+
+
+# Set up filename prefixes and output folders with the data
+dir.create("Output")
+#dir.create(file.path("Output","Fig5F_input_folder"))
+
+
+dir.create(file.path("Output","deseq2"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d")))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "dotplot"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "R_objects"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "csv"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "gene_expression"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "gene_expression","GO"))
+dir.create(file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "gvolcano"))
+
+
+fname_Fig5F_input_folder <- file.path("Fig5F_input_folder")
+
+#set up folder path QC
+
+fname_prefix_dotplot_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "dotplot", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_volcano_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "volcano", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_R_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "R_objects", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_csv_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "csv", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_gene_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "gene_expression", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_gene_GO_deseq2 <- file.path("Output","deseq2", format(Sys.Date(), "%y%m%d"), "gene_expression", "GO",
+                               format(Sys.Date(), "%y%m%d"))
+
+
+#okabe_tab <- read_excel("Fig5F_input_folder/color_scale.xlsx")
+#okabe_pal=okabe_tab$hex
+
+okabe_pal=c("#E69F00","#56B4E9","#009E73","#f0E442","#0072B2","#D55E00","#CC79A7","#000000")
+
+
+pal <- c("#000000","#004949","#009292","#ff6db6","#ffb6db",
+         "#490092","#006ddb","#b66dff","#6db6ff","#b6dbff",
+         "#920000","#924900","#db6d00","#24ff24","#ffff6d")
+```
+
+########load data
+
+```{r}
+#load(paste0(getwd(),"/Fig5F_input_folder/dds_PCA.RData"))
+load(paste0(getwd(),"/Fig5F_input_folder/260213_dds_PCA.RData"))
+
+#dds <- dds[ !rownames(dds) %in% c("COM_K", "dCAS9", "MCP_PH_TagBFP", "OPTetR"), ]
+#rownames(dds)[rownames(dds) %in% c("COM_K", "dCAS9", "MCP_PH_TagBFP", "OPTetR")]
+```
+
+####change PCA appeareance
+
+```{r}
+
+okabe_named <- c(
+  "NTC"    = "#000000",
+  "hiPSC"  = "#56B4E9",
+  "CIRI"   = "#CC79A7",
+  "OPTIOX" = "#E69F00"
+)
+
+p=plot_pca_scatters(vsd, n_PCs = 2,  color_by = "name", shape_by = "replicate",show_var_exp=T)#batch 
+
+p2 <- p +
+  scale_shape_manual(
+    name = "Replicate",
+    values = c(
+      "R1" = 16,  # filled circle
+      "R2" = 17,  # filled triangle (up)
+      "R3" = 15,  # filled square
+      "R4" = 25   # filled triangle (down)
+    )
+  ) +
+  scale_color_manual(
+    name = "Group",
+    values = okabe_named
+  ) +
+  labs(
+    x = paste0("PC1","(", pca_variability[1,1], "%)"),
+    y = paste0("PC2","(", pca_variability[2,1], "%)"),
+    title = "PCA plot"
+  )+
+  geom_point(size = 3)
+
+p2
+
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_PCA.pdf"),
+       plot = p2, width = 5, height = 4)
+```
+
+
+
+####process PCA to add gene names to loadings and scale arrows
+
+```{r}
+
+# Ensure gene names exist
+if (!"gene_name" %in% colnames(PCA_loadings)) {
+  PCA_loadings$gene_name <- rownames(PCA_loadings)
+}
+
+# Select top genes by contribution
+n_arrows <- 25
+loadings2 <- PCA_loadings %>%
+  mutate(contrib = PC1^2 + PC2^2) %>%
+  slice_max(contrib, n = n_arrows)
+
+# Scale loadings so arrows fit in score space
+arrow_scale <- max(abs(c(PCAdata$PC1, PCAdata$PC2)), na.rm = TRUE) * 0.9
+loadings2 <- loadings2 %>%
+  mutate(PC1s = PC1 * arrow_scale,
+         PC2s = PC2 * arrow_scale)
+
+# Axis labels with explained variance
+pc1_lab <- paste0("PC1 (", scales::percent(pca_res$var_exp[1], accuracy = 0.1), ")")
+pc2_lab <- paste0("PC2 (", scales::percent(pca_res$var_exp[2], accuracy = 0.1), ")")
+
+# === Biplot ===
+p_biplot <- ggplot() +
+  geom_point(data = PCAdata,
+             aes(x = PC1, y = PC2, color = name, shape = replicate),
+             size = 3, alpha = 0.9) +
+  geom_segment(data = loadings2,
+               aes(x = 0, y = 0, xend = PC1s, yend = PC2s),
+               arrow = arrow(length = unit(0.02, "npc")), linewidth = 0.3) +
+  geom_text_repel(data = loadings2,
+                  aes(x = PC1s, y = PC2s, label = gene_name),
+                  size = 3, max.overlaps = Inf, min.segment.length = 0) +
+  labs(x = pc1_lab, y = pc2_lab, title = "PCA biplot (VST, DESeq2)") +
+  theme_classic() +
+  theme(plot.title = element_text(face = "bold"))
+
+print(p_biplot)
+
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_PCA_biplot_loadings_DESeq2.pdf"),
+       plot = p_biplot, width = 6.5, height = 5)
+
+ggplot(PCA_loadings, aes(x = PC1, y = PC2)) +
+  geom_point(alpha = 0.4) +
+  geom_text_repel(data = PCA_loadings %>% slice_max(PC1^2 + PC2^2, n = 25),
+                  aes(label = gene_name), size = 3) +
+  theme_classic() +
+  labs(title = "Gene loadings on PC1 and PC2",
+       x = "PC1 loading", y = "PC2 loading")
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_PCA_loadings_dotplot.pdf"),
+       width = 6.5, height = 5)
+
+
+```
+####PCA loading analysis top 50 per PC
+
+```{r}
+top_pc1_pos <- PCA_loadings %>% arrange(desc(PC1)) %>% slice_head(n = 50)
+top_pc1_neg <- PCA_loadings %>% arrange(PC1) %>% slice_head(n = 50)
+
+top_pc2_pos <- PCA_loadings %>% arrange(desc(PC2)) %>% slice_head(n = 50)
+top_pc2_neg <- PCA_loadings %>% arrange(PC2) %>% slice_head(n = 50)
+
+gene_ranks_pc1 <- PCA_loadings$PC1###pluripotency
+names(gene_ranks_pc1) <- PCA_loadings$gene_name
+
+gene_ranks_pc2 <- PCA_loadings$PC2###differentiation in muscle
+names(gene_ranks_pc2) <- PCA_loadings$gene_name
+
+###unranked and on top 50
+top_pc1_pos_entrez <- bitr(top_pc1_pos$gene_name, fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Hs.eg.db)
+top_pc1_neg_entrez <- bitr(top_pc1_neg$gene_name, fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Hs.eg.db)
+top_pc2_pos_entrez <- bitr(top_pc2_pos$gene_name, fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Hs.eg.db)
+top_pc2_neg_entrez <- bitr(top_pc2_neg$gene_name, fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Hs.eg.db)
+
+###entrez lists on ranked lists
+
+gene_ranks_pc1_entrez <- bitr(names(gene_ranks_pc1), fromType="SYMBOL",
+                              toType="ENTREZID", OrgDb=org.Hs.eg.db)
+gene_ranks_pc1 <- gene_ranks_pc1[match(gene_ranks_pc1_entrez$SYMBOL, names(gene_ranks_pc1))]
+names(gene_ranks_pc1) <- gene_ranks_pc1_entrez$ENTREZID
+
+gene_ranks_pc2_entrez <- bitr(names(gene_ranks_pc2), fromType="SYMBOL",
+                              toType="ENTREZID", OrgDb=org.Hs.eg.db)
+gene_ranks_pc2 <- gene_ranks_pc2[match(gene_ranks_pc2_entrez$SYMBOL, names(gene_ranks_pc2))]
+names(gene_ranks_pc2) <- gene_ranks_pc2_entrez$ENTREZID
+
+```
+
+####run GO enrichment test on top 50 ###PC1 #pliripotency
+
+```{r}
+# Run enrichment tests (GO or KEGG)
+ego_pc1_pos <- enrichGO(gene = top_pc1_pos_entrez$ENTREZID,
+                        OrgDb = org.Hs.eg.db,
+                        ont = "BP",
+                        pAdjustMethod = "BH",
+                        qvalueCutoff = 0.05,
+                        readable = TRUE)
+
+ego_pc1_neg <- enrichGO(gene = top_pc1_neg_entrez$ENTREZID,
+                        OrgDb = org.Hs.eg.db,
+                        ont = "BP",
+                        pAdjustMethod = "BH",
+                        qvalueCutoff = 0.05,
+                        readable = TRUE)
+
+#  Visualize results
+library(enrichplot)
+
+dotplot(ego_pc1_pos,showCategory = 15, title = "Top PC1 Positive Loadings (iPSC) – GO BP")
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GO_PC1pos.pdf"),
+     width = 10, height = 12)
+dotplot(ego_pc1_neg,showCategory = 15, title = "Top PC1 Negative Loadings (muscle) – GO BP")
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GO_PC1neg.pdf"),
+     width = 10, height = 12)
+
+# For KEGG instead:
+ekegg_pc1_pos <- enrichKEGG(gene = top_pc1_pos_entrez$ENTREZID, organism = "hsa")
+ekegg_pc1_neg <- enrichKEGG(gene = top_pc1_neg_entrez$ENTREZID, organism = "hsa")
+
+dotplot(ekegg_pc1_pos, showCategory = 15, title = "KEGG enrichment (PC1 positive)")
+```
+####run GO enrichment test on top 50 ###PC2 #muscle, but less clear
+
+```{r}
+# Run enrichment tests (GO or KEGG)
+ego_pc2_pos <- enrichGO(gene = top_pc2_pos_entrez$ENTREZID,
+                        OrgDb = org.Hs.eg.db,
+                        ont = "BP",
+                        pAdjustMethod = "BH",
+                        qvalueCutoff = 0.05,
+                        readable = TRUE)
+
+ego_pc2_neg <- enrichGO(gene = top_pc1_neg_entrez$ENTREZID,
+                        OrgDb = org.Hs.eg.db,
+                        ont = "BP",
+                        pAdjustMethod = "BH",
+                        qvalueCutoff = 0.05,
+                        readable = TRUE)
+
+#  Visualize results
+library(enrichplot)
+
+dotplot(ego_pc2_pos, showCategory = 15, title = "Top PC2 Positive Loadings (OPTIOX)– GO BP")
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GO_PC2pos.pdf"),
+     width = 10, height = 12)
+dotplot(ego_pc2_neg, showCategory = 15, title = "Top PC2 Negative Loadings (CIRI-hiPSC)– GO BP")
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GO_PC2neg.pdf"),
+     width = 10, height = 12)
+# For KEGG instead:
+ekegg_pc2_pos <- enrichKEGG(gene = top_pc2_pos_entrez$ENTREZID, organism = "hsa")
+ekegg_pc2_neg <- enrichKEGG(gene = top_pc2_neg_entrez$ENTREZID, organism = "hsa")
+
+dotplot(ekegg_pc2_pos, showCategory = 15, title = "KEGG enrichment (PC2 positive)")
+```
+####GSEA on PC1
+
+```{r}
+
+# Rank all genes by PC2 loading
+gene_ranks_pc1 <- PCA_loadings$PC1
+names(gene_ranks_pc1) <- PCA_loadings$gene_name
+
+# Convert gene symbols to ENTREZ IDs
+gene_ranks_pc1_entrez <- bitr(names(gene_ranks_pc1), fromType="SYMBOL",
+                              toType="ENTREZID", OrgDb=org.Hs.eg.db)
+gene_ranks_pc1 <- gene_ranks_pc1[match(gene_ranks_pc1_entrez$SYMBOL, names(gene_ranks_pc1))]
+names(gene_ranks_pc1) <- gene_ranks_pc1_entrez$ENTREZID
+
+# Run GSEA
+gsea_pc1 <- gseGO(geneList = sort(gene_ranks_pc1, decreasing = TRUE),
+                  OrgDb = org.Hs.eg.db,
+                  ont = "BP",
+                  minGSSize = 10,
+                  pvalueCutoff = 0.05,
+                  verbose = FALSE)
+
+#ridgeplot(gsea_pc2, showCategory = 15)
+dotplot(gsea_pc1, color = "NES",split =".sign",showCategory = 20, decreasing = T,title = "GSEA PC1")
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GSEA_PC1.pdf"),
+     width = 8, height = 8)
+
+#term_to_plot=c("GO:0030239","GO:0030216")  # if you need to plot multiple terms
+#p_top <- gseaplot2(gsea_pc2, geneSetID = 1,pvalue_table = TRUE, base_size = 12)   # 1 = first row in gsea_pc1@result after default ordering
+p_top <-gseaplot2(
+    gsea_pc1,
+    geneSetID = 1,
+    #geneSetID = term_to_plot,
+    #title = gsea_pc2@result$Description[gsea_pc2@result$ID == term_to_plot],
+    subplots = 1:3,  # Enrichment curve + NES info
+    color = "firebrick",
+    pvalue_table = TRUE
+  )
+p_top
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GSEA_PC1_top_enrichment.pdf"),
+     width = 6, height = 4)
+
+gsea_pal=c("#E69F00","blue","black")
+term_to_plot=c("GO:0030239","GO:0061061","GO:0055001")
+gseaplot2(
+    gsea_pc1,
+    #geneSetID = 1,
+    geneSetID = term_to_plot,
+    #title = gsea_pc2@result$Description[gsea_pc2@result$ID == term_to_plot],
+    subplots = 1:3,  # Enrichment curve + NES info
+    color = gsea_pal[seq_along(term_to_plot)],
+    pvalue_table = TRUE
+  )
+
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GSEA_PC1_iPSC_muscle.pdf"),
+     width = 7, height = 5)
+
+gsea_pal=c("#E69F00","blue","black")
+term_to_plot=c("GO:0055002"#top
+               ,"GO:0060537"#striated muscle tissue development
+               ,"GO:0007369"#bottom 
+               )
+gseaplot2(
+    gsea_pc1,
+    #geneSetID = 1,
+    geneSetID = term_to_plot,
+    #title = gsea_pc2@result$Description[gsea_pc2@result$ID == term_to_plot],
+    subplots = 1:3,  # Enrichment curve + NES info
+    color = gsea_pal[seq_along(term_to_plot)],
+    pvalue_table = TRUE
+  )
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GSEA_PC1_top_bottom_enrichment.pdf"),
+     width = 7, height = 5)
+```
+
+####GSEA on PC2
+
+```{r}
+
+# Rank all genes by PC2 loading
+gene_ranks_pc2 <- PCA_loadings$PC2
+names(gene_ranks_pc2) <- PCA_loadings$gene_name
+
+# Convert gene symbols to ENTREZ IDs
+gene_ranks_pc2_entrez <- bitr(names(gene_ranks_pc2), fromType="SYMBOL",
+                              toType="ENTREZID", OrgDb=org.Hs.eg.db)
+gene_ranks_pc2 <- gene_ranks_pc1[match(gene_ranks_pc2_entrez$SYMBOL, names(gene_ranks_pc2))]
+names(gene_ranks_pc2) <- gene_ranks_pc2_entrez$ENTREZID
+
+# Run GSEA
+gsea_pc2 <- gseGO(geneList = sort(gene_ranks_pc2, decreasing = TRUE),
+                  OrgDb = org.Hs.eg.db,
+                  ont = "BP",
+                  minGSSize = 10,
+                  pvalueCutoff = 0.05,
+                  verbose = FALSE)
+
+#ridgeplot(gsea_pc2, showCategory = 15)
+dotplot(gsea_pc2, color = "NES",split =".sign",showCategory = 20, decreasing = T,title = "GSEA PC2")
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GSEA_PC2.pdf"),
+     width = 8, height = 8)
+
+#term_to_plot=c("GO:0030239","GO:0030216")  # if you need to plot multiple terms
+#p_top <- gseaplot2(gsea_pc2, geneSetID = 1,pvalue_table = TRUE, base_size = 12)   # 1 = first row in gsea_pc1@result after default ordering
+p_top <-gseaplot2(
+    gsea_pc2,
+    geneSetID = 1,
+    #geneSetID = term_to_plot,
+    #title = gsea_pc2@result$Description[gsea_pc2@result$ID == term_to_plot],
+    subplots = 1:3,  # Enrichment curve + NES info
+    color = "firebrick",
+    pvalue_table = TRUE
+  )
+p_top
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GSEA_PC2_top_enrichment.pdf"),
+     width = 6, height = 4)
+
+gsea_pal=c("#E69F00","blue","black")
+term_to_plot=c("GO:0030239","GO:0061061","GO:0055001")
+gseaplot2(
+    gsea_pc2,
+    #geneSetID = 1,
+    geneSetID = term_to_plot,
+    #title = gsea_pc2@result$Description[gsea_pc2@result$ID == term_to_plot],
+    subplots = 1:3,  # Enrichment curve + NES info
+    color = gsea_pal[seq_along(term_to_plot)],
+    pvalue_table = TRUE
+  )
+
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GSEA_PC2_muscle.pdf"),
+     width = 7, height = 5)
+
+gsea_pal=c("#E69F00","blue","black")
+term_to_plot=c("GO:0003012"#top
+               ,"GO:0006936"#
+               ,"GO:0003015"#bottom 
+               )
+gseaplot2(
+    gsea_pc2,
+    #geneSetID = 1,
+    geneSetID = term_to_plot,
+    #title = gsea_pc2@result$Description[gsea_pc2@result$ID == term_to_plot],
+    subplots = 1:3,  # Enrichment curve + NES info
+    color = gsea_pal[seq_along(term_to_plot)],
+    pvalue_table = TRUE
+  )
+ggsave(filename = paste0(fname_prefix_dotplot_deseq2, "_", "GSEA_PC2_top_bottom_enrichment.pdf"),
+     width = 7, height = 5)
+```
+
+
+####make plots for specific genes by Deseq2 data normalized
+
+```{r}
+okabe_named <- c(
+  "NTC"    = "#000000",
+  "hiPSC"  = "#56B4E9",
+  "CIRI"   = "#CC79A7",
+  "OPTIOX" = "#E69F00"
+)
+
+geneInfo_f <- geneInfo_f %>%
+  mutate(gene_name = ifelse(
+    gene_ID == "MYOD1",          # the custom one you added
+    "MYOD1exo",                  # rename it
+    gene_name                    # keep all others unchanged
+  ))
+
+genes_to_plot=c("MYOG","TTN","IGF2","DLK1","MYL2","POU5F1","NANOG","MYOD1","MYOC","NR3C1","NR3C2","dCAS9","COM_K", "PAX7","DLK1","IGF2","MYH3","MYL4","DES","HOXB1","HOXB9","NOXO1","RYR1","CACNA1S","STAC3","SCN4A","PAX3","MYF5","MEF2C","MEF2D")
+g_info_plot=geneInfo_f[ geneInfo_f$gene_name %in% genes_to_plot , c("gene_ID","gene_name") ]
+genes_to_plot_ensb=g_info_plot$gene_ID
+
+#dd <- plotCounts(dds, gene=c("ENSG00000122180"), intgroup=c("condition","name","replicate","name_R"), returnData=TRUE)
+#gene_symbol <- geneInfo_f$gene_name[ geneInfo_f$gene_ID == "ENSG00000122180" ]
+#colnames(dd)[ colnames(dd) == "count" ] <- gene_symbol
+
+intgroup      <- c("condition","name","replicate","name_R","cell_type")
+
+# helper: match Ensembl (with or w/o version) to row index in dds
+ens_dds_raw    <- rownames(dds)
+ens_dds_novers <- sub("\\..*$","", ens_dds_raw)
+get_idx <- function(ens_id) {
+  key <- sub("\\..*$","", ens_id)
+  idx <- which(ens_dds_novers == key)
+  if (length(idx) == 0) return(integer(0))
+  if (length(idx) == 1) return(idx)
+  # if multiple rows, pick the most expressed by total normalized counts
+  nc <- counts(dds, normalized=TRUE)[idx, , drop=FALSE]
+  idx[ which.max(rowSums(nc, na.rm=TRUE)) ]
+}
+
+# build one small dd per gene, keep only keys + this gene's counts (renamed)
+dd_list <- lapply(seq_len(nrow(g_info_plot)), function(i) {
+  ens  <- g_info_plot$gene_ID[i]
+  sym  <- g_info_plot$gene_name[i]
+  idx  <- get_idx(ens)
+  if (length(idx) == 0) return(NULL)  # silently skip if not found in dds
+  dd_i <- plotCounts(dds, gene = idx, intgroup = intgroup, normalized=TRUE
+,returnData = TRUE)
+  colnames(dd_i)[ colnames(dd_i) == "count" ] <- sym
+  # keep only join keys + this gene column
+  dd_i[, c(intgroup, sym), drop=FALSE]
+})
+
+# drop missing
+dd_list <- Filter(Negate(is.null), dd_list)
+if (length(dd_list) == 0) stop("None of the requested genes were found in 'dds'.")
+
+# merge all by the requested columns
+dd_merged <- Reduce(function(x, y) merge(x, y, by = intgroup, all = TRUE), dd_list)
+
+#dd_merged=dd_merged[dd_merged$name!="hiPSC", ]
+
+
+ggplot(dd_merged, aes(x = name, y = MYOG)) +
+  # Boxplot: same box per cell type (no grouping by condition)
+  geom_boxplot(outlier.shape = NA, alpha = 0.3, color = "gray40") +
+  # Jitter: condition affects shape and color
+  geom_jitter(aes(color = name), width = 0.2, size = 2) +
+  scale_color_manual(name = "Group", values = okabe_named, drop = FALSE) +
+  geom_signif(comparisons = list(c("CIRI", "OPTIOX")),
+              map_signif_level = TRUE, test = "wilcox.test",
+  test.args = list(exact = FALSE, correct = FALSE)) +
+  #geom_signif(comparisons = list(c("hiPSC", "NTC")),  
+   #           map_signif_level = TRUE, test = "wilcox.test",
+  #test.args = list(exact = FALSE, correct = FALSE)) +
+  scale_y_continuous(trans = "log1p") +
+  labs(
+    title = "MYOG expression by cell type and condition",
+    y = "DESeq2 normalized counts (log1p)",
+    x = ""
+  ) +
+  theme_bw()
+ggsave(filename = paste0(fname_prefix_gene_deseq2, "_MYOG.pdf"),
+       width = 6.5, height = 5)
+
+# Loop through each gene
+for (gene in genes_to_plot) {
+
+  # Skip if gene column not present
+  if (!(gene %in% colnames(dd_merged))) {
+    message("Skipping ", gene, " (not found in dd_merged)")
+    next
+  }
+
+  # Build the plot
+  p <- ggplot(dd_merged, aes(x = name, y = .data[[gene]])) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.3, color = "gray40") +
+    geom_jitter(aes(color = name), width = 0.2, size = 2) +
+    scale_color_manual(name = "Group", values = okabe_named, drop = FALSE) +
+      geom_signif(comparisons = list(c("CIRI", "OPTIOX")),
+              map_signif_level = TRUE, test = "wilcox.test",
+  test.args = list(exact = FALSE, correct = FALSE)) +
+  #geom_signif(comparisons = list(c("hiPSC", "NTC")),
+   #           map_signif_level = TRUE, test = "wilcox.test",
+  #test.args = list(exact = FALSE, correct = FALSE)) +
+    scale_y_continuous(trans = "log1p") +
+    labs(
+      title = paste0(gene, " expression by cell type and condition"),
+      y = "DESeq2 normalized counts (log1p)",
+      x = ""
+    ) +
+    theme_bw()
+
+  # Save each plot
+  ggsave(
+    filename = paste0(fname_prefix_gene_deseq2, "_", gene, ".pdf"),
+    plot = p,
+    width = 6.5, height = 5
+  )
+
+  message("Saved plot for ", gene)
+}
+
+```
+
+####make plots for specific genes by TPM data normalized
+
+```{r}
+
+geneInfo_f <- geneInfo_f %>%
+  mutate(gene_name = ifelse(
+    gene_ID == "MYOD1",          # the custom one you added
+    "MYOD1exo",                  # rename it
+    gene_name                    # keep all others unchanged
+  ))
+
+genes_to_plot=c("MYOG","TTN","IGF2","DLK1","MYL2","POU5F1","NANOG","MYOD1","MYOC","NR3C1","NR3C2","dCAS9","COM_K", "PAX7","DLK1","IGF2","MYH3","MYL4","DES","HOXB1","HOXB9","NOXO1","RYR1","CACNA1S","STAC3","SCN4A","PAX3","MYF5","MEF2C","MEF2D")
+g_info_plot=geneInfo_f[ geneInfo_f$gene_name %in% genes_to_plot , c("gene_ID","gene_name") ]
+genes_to_plot_ensb=g_info_plot$gene_ID
+
+filter_tpm=counts_tpm[ rownames(counts_tpm) %in% genes_to_plot_ensb , ]
+filter_tpm$ensb=rownames(filter_tpm)
+filter_tpm=filter_tpm%>%
+  left_join(g_info_plot, by=c("ensb"="gene_ID"))
+rownames(filter_tpm)=filter_tpm$gene_name
+filter_tpm=filter_tpm%>%
+  select(-ensb, -gene_name)
+
+m=as.data.frame(t(filter_tpm))
+m$sample_ID=rownames(m)
+m=m%>%
+  left_join(meta, by="sample_ID")
+rownames(m)=m$sample_ID
+
+#m=m[ m$name!="hiPSC", ]#take off the hiPSC
+
+# Loop through each gene
+for (gene in genes_to_plot) {
+
+  # Skip if gene column not present
+  if (!(gene %in% colnames(m))) {
+    message("Skipping ", gene, " (not found in m)")
+    next
+  }
+
+  # Build the plot
+  p <- ggplot(m, aes(x = cell_type, y = .data[[gene]])) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.3, color = "gray40") +
+    geom_jitter(aes(shape = condition, color = name), width = 0.2, size = 2) +
+      scale_color_manual(name = "Group", values = okabe_named, drop = FALSE) +
+  geom_signif(comparisons = list(c("CIRI", "OPTIOX")),
+              map_signif_level = TRUE, test = "wilcox.test",
+  test.args = list(exact = FALSE, correct = FALSE)) +
+ # geom_signif(comparisons = list(c("hiPSC", "NTC")),  
+  #            map_signif_level = TRUE, test = "wilcox.test") +
+    scale_y_continuous(trans = "log1p") +
+    labs(
+      title = paste0(gene, " expression by cell type and condition"),
+      y = "TPM normalized counts (log1p)",
+      x = ""
+    ) +
+    theme_bw()
+
+  # Save each plot
+  ggsave(
+    filename = paste0(fname_prefix_gene_deseq2, "_", gene, "_TPM.pdf"),
+    plot = p,
+    width = 6.5, height = 5
+  )
+
+  message("Saved plot for ", gene)
+}
+
+external_exp=m
+
+#external_exp=external_exp%>%
+ # filter(cell_type=="GERALT")
+
+```
+
+####make plots for specific genes by TPM data normalized
+####polot genes from DEG analysis
+
+```{r}
+
+geneInfo_f <- geneInfo_f %>%
+  mutate(gene_name = ifelse(
+    gene_ID == "MYOD1",          # the custom one you added
+    "MYOD1exo",                  # rename it
+    gene_name                    # keep all others unchanged
+  ))
+
+genes_to_plot=c("MYOG","TTN","IGF2","DLK1","MYL2","POU5F1","NANOG","MYOD1","MYOC","NR3C1","NR3C2","dCAS9","COM_K", "PAX7","DLK1","IGF2","MYH3","MYL4","DES","HOXB1","HOXB9","NOXO1","RYR1","CACNA1S","STAC3","SCN4A","PAX3","MYF5","MEF2C","MEF2D")
+g_info_plot=geneInfo_f[ geneInfo_f$gene_name %in% genes_to_plot , c("gene_ID","gene_name") ]
+genes_to_plot_ensb=g_info_plot$gene_ID
+
+filter_tpm=counts_tpm[ rownames(counts_tpm) %in% genes_to_plot_ensb , ]
+filter_tpm$ensb=rownames(filter_tpm)
+filter_tpm=filter_tpm%>%
+  left_join(g_info_plot, by=c("ensb"="gene_ID"))
+rownames(filter_tpm)=filter_tpm$gene_name
+filter_tpm=filter_tpm%>%
+  select(-ensb, -gene_name)
+
+m=as.data.frame(t(filter_tpm))
+m$sample_ID=rownames(m)
+m=m%>%
+  left_join(meta, by="sample_ID")
+rownames(m)=m$sample_ID
+
+# keep only CIRI + OPTIOX
+m <- m %>%
+  dplyr::filter(name %in% c("CIRI", "OPTIOX")) %>%
+  droplevels()
+
+rownames(m) <- m$sample_ID
+
+#m=m[ m$name!="hiPSC", ]#take off the hiPSC
+
+# Loop through each gene
+for (gene in genes_to_plot) {
+
+  # Skip if gene column not present
+  if (!(gene %in% colnames(m))) {
+    message("Skipping ", gene, " (not found in m)")
+    next
+  }
+
+  # Build the plot
+  p <- ggplot(m, aes(x = name, y = .data[[gene]])) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.3, color = "gray40") +
+    geom_jitter(aes(shape = condition, color = name), width = 0.2, size = 2) +
+      scale_color_manual(name = "Group", values = okabe_named, drop = FALSE) +
+  geom_signif(comparisons = list(c("CIRI", "OPTIOX")),
+              map_signif_level = TRUE, test = "wilcox.test",
+  test.args = list(exact = FALSE, correct = FALSE)) +
+    scale_y_continuous(trans = "log1p") +
+    labs(
+      title = paste0(gene, " expression by cell type and condition"),
+      y = "TPM normalized counts (ln(TPM + 1))",
+      x = ""
+    ) +
+    theme_bw()
+
+  # Save each plot
+  ggsave(
+    filename = paste0(fname_prefix_gene_deseq2, "_", gene, "_spec_TPM.pdf"),
+    plot = p,
+    width = 6.5, height = 5
+  )
+
+  message("Saved plot for ", gene)
+}
+
+```
+
+
+####make plot of NANOG expression comparing the 3 configurations
+
+```{r}
+
+genes_to_plot=c("MYOG","TTN","IGF2","DLK1","MYL2","POU5F1","NANOG","NANOGxt","MYOD1","MYOC","MYOD1exo","NR3C1","NR3C2")
+
+# Loop through each gene
+for (gene in genes_to_plot) {
+
+  # Skip if gene column not present
+  if (!(gene %in% colnames(external_exp))) {
+    message("Skipping ", gene, " (not found in external_exp)")
+    next
+  }
+
+  # Build the plot
+  p <- ggplot(external_exp, aes(x = name, y = .data[[gene]])) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.3, color = "gray40") +
+    geom_jitter(aes(shape = name, color = name), width = 0.2, size = 2) +
+      geom_signif(comparisons = list(c("TT2MNi", "TT2MNb")),  # replace with your levels
+              map_signif_level = TRUE,
+              test = "t.test")+
+    scale_y_continuous(trans = "log1p") +
+    labs(
+      title = paste0(gene, " expression by cell type and condition"),
+      y = "TPM normalized counts (ln(TPM + 1))",
+      x = ""
+    ) +
+    theme_bw()
+
+  # Save each plot
+  ggsave(
+    filename = paste0(fname_prefix_gene_deseq2, "_", gene, "_TPM_GERALT_ivsb.pdf"),
+    plot = p,
+    width = 6.5, height = 5
+  )
+
+  message("Saved plot for ", gene)
+}
+```
+
+
+####create Meta data with contrasts for DEG analysis
+####already present so silenced the pipeline
+
+```{r}
+# Create contrast columns for each condition comparison
+#meta <- meta %>%
+ # mutate(cfr_GERALT_vs_OPTIOX = ifelse(cell_type == "GERALT", "GERALT",
+  #                                   ifelse(cell_type == "OPTIOX"&condition !="hiPSCs", "OPTIOX", "no")),
+       #  cfr_TT2MN_vs_TMM = ifelse(name == "TT2MN", "TT2MN",
+        #                             ifelse(name == "TMM", "TMM", "no")),
+         #cfr_TT2MNb_vs_TMM = ifelse(name == "TT2MNb", "TT2MNb",
+        #                             ifelse(name == "TMM", "TMM", "no")),
+        # cfr_TT2MNi_vs_TMM = ifelse(name == "TT2MNi", "TT2MNi",
+        #                             ifelse(name == "TMM", "TMM", "no")),
+        # cfr_TT2MN_vs_TT2MNb = ifelse(name == "TT2MN", "TT2MN",
+        #                             ifelse(name == "TT2MNb", "TT2MNb", "no")),
+        # cfr_TT2MN_vs_TT2MNi = ifelse(name == "TT2MN", "TT2MN",
+         #                            ifelse(name == "TT2MNi", "TT2MNi", "no")),
+         #cfr_TT2MNi_vs_TT2MNb = ifelse(name == "TT2MNi", "TT2MNi",
+          #                           ifelse(name == "TT2MNb", "TT2MNb", "no")))
+```
+
+
+####DEG analysis between CIRI and OPTIOX and hiPSC vs NTC for each cell type one by one then do a loop
+
+```{r}
+#In meta I already placed my contrast columns starting with "cfr_"
+#in case cfr_columns do not exist just create them. Place in the comparison the condition name (meta$condition relative to the sample) and the samples not analyzed will have "no" instead.
+# Identify contrast columns (those starting with "cfr_")
+contrast_cols <- grep("^cfr_", colnames(meta), value = TRUE)
+contrast_cols
+# Pick one contrast manually for now (first one)
+contrast_col <- contrast_cols[1]#cfr_CIRIvsOPTIOX column (need to check the contrast col)
+contrast_col
+
+# Prepare metadata for this contrast
+meta_cfr <- meta %>%
+  dplyr::select(sample_ID, condition, replicate, !!sym(contrast_col)) %>%
+  dplyr::rename(cfr = !!sym(contrast_col)) %>%
+  dplyr::filter(cfr != "no")
+
+# Subset DESeq2 object to relevant samples
+dds_sub <- dds[, colnames(dds) %in% meta_cfr$sample_ID]
+dds_sub$group <- factor(meta_cfr$cfr)
+#levels(dds_sub$group) #check level of contrast
+# (Optional — set whichever condition you want as baseline)
+dds_sub$group <- relevel(dds_sub$group, ref = levels(dds_sub$group)[1])
+# --- Define new design formula ---
+design(dds_sub) <- ~ group
+# Run DESeq2
+dds_sub <- DESeq(dds_sub)
+
+# Define contrast (2 levels only)
+cfr_levels <- levels(dds_sub$group)
+res <- results(dds_sub, contrast = c("group", cfr_levels[1], cfr_levels[2]))#CIRI is 1 and OPTIOX is 2
+
+# Clean result table
+res_df <- as.data.frame(res)
+res_df <- res_df %>%
+  rownames_to_column("gene_ID") %>%
+  left_join(geneInfo_f, by = "gene_ID") %>%
+  arrange(padj)
+
+#res_df=res_df%>%dplyr::filter(!gene_ID %in% c("COM_K", "dCAS9","MCP_PH_TagBFP","OPTetR"))#eliminate gene names not needed
+#gene_ID=counts_df$gene_ID
+
+```
+####create a table to store all the data on specific comparisons
+
+```{r}
+###set the comparisons you want to do
+
+comparisons=c("cfr_CIRIvsOPTIOX",
+              "cfr_NTCvshiPSCs")
+
+first_to_compare=c("CIRI","NTC")
+
+###create an empty list to store all the DEG results
+deg_results_list <- list()
+
+for (i in seq_along(comparisons)) {
+  contrast_col <- comparisons[i]
+  ref_level    <- first_to_compare[i]
+  message("Processing contrast: ", contrast_col, "  (reference = ", ref_level, ")")
+
+  meta_cfr <- meta %>%
+    dplyr::select(sample_ID, condition, replicate, !!sym(contrast_col)) %>%
+    dplyr::rename(cfr = !!sym(contrast_col)) %>%
+    dplyr::filter(cfr != "no")
+
+  dds_sub <- dds[, colnames(dds) %in% meta_cfr$sample_ID]
+  dds_sub$group <- factor(meta_cfr$cfr)
+
+  # relevel to make sure first_to_compare is the reference
+  if (ref_level %in% levels(dds_sub$group)) {
+    dds_sub$group <- relevel(dds_sub$group, ref = ref_level)
+  } else {
+    warning("Reference ", ref_level, " not found in ", contrast_col)
+  }
+
+  design(dds_sub) <- ~ group
+  dds_sub <- DESeq(dds_sub)
+
+  # contrast = "comparison vs baseline"
+  cfr_levels <- levels(dds_sub$group)
+  res <- results(dds_sub, contrast = c("group", cfr_levels[1], cfr_levels[2]))
+
+  res_df <- as.data.frame(res) %>%
+    tibble::rownames_to_column("gene_ID") %>%
+    left_join(geneInfo_f, by = "gene_ID") %>%
+    arrange(padj)
+
+  deg_results_list[[contrast_col]] <- res_df
+}
+
+# --- user-defined thresholds --- add directionality
+fc_cutoff <- log2(2)   # change as needed, e.g. log2(2) for 2× fold change
+padj_cutoff <- 0.05      # adjust significance threshold
+
+# --- refine and label each DEG table ---
+for (contrast_col in comparisons) {
+  message("Processing contrast for final table: ", contrast_col)
+  
+  deg_results_list[[contrast_col]] <- deg_results_list[[contrast_col]] %>%
+   # dplyr::filter(!gene_ID %in% c("COM_K", "dCAS9","MCP_PH_TagBFP","OPTetR"))%>%#eliminate gene names not needed
+    dplyr::select(gene_ID, gene_name, log2FoldChange, pvalue, padj) %>%
+    mutate(
+      direction = case_when(
+        padj < padj_cutoff & log2FoldChange >  fc_cutoff ~ "Up",
+        padj < padj_cutoff & log2FoldChange < -fc_cutoff ~ "Down",
+        TRUE ~ "NS"
+      )
+    ) 
+}
+
+deg_results_list_preprocessed=deg_results_list
+#make a dataframe with all the results
+
+# --- user-defined thresholds ---
+fc_cutoff <- log2(2)   # change as needed, e.g. log2(2) for 2× fold change
+padj_cutoff <- 0.05      # adjust significance threshold
+
+# --- refine and label each DEG table ---
+for (contrast_col in comparisons) {
+  message("Processing contrast for final table: ", contrast_col)
+  
+  deg_results_list[[contrast_col]] <- deg_results_list[[contrast_col]] %>%
+    dplyr::select(gene_ID, gene_name, log2FoldChange, pvalue, padj, direction) %>%
+    dplyr::rename(
+      !!paste0(contrast_col, "_log2FC") := log2FoldChange,
+      !!paste0(contrast_col, "_pvalue") := pvalue,
+      !!paste0(contrast_col, "_padj")   := padj,
+      !!paste0(contrast_col, "_direction") := direction
+    )
+}
+
+library(purrr)
+# --- merge all contrasts into one big table ---
+deg_merged <- purrr::reduce(deg_results_list, full_join, by = c("gene_ID", "gene_name"))
+de_stats <- deg_merged
+
+#save as txt and RDS
+filename = paste0(fname_prefix_csv_deseq2, "_DEG_all_comparisons_cfr.txt")
+write.table(deg_merged, file=filename, sep="\t", quote=F, row.names=F)
+
+Rdata_filename = paste0(fname_prefix_R_deseq2, "_DEG_analysis.RData")
+save(deseq_counts,geneInfo_f,counts_f,meta,dds,counts_tpm,deg_results_list,deg_merged,deg_results_list_preprocessed,
+     file = Rdata_filename)
+
+```
+
+####make volcano plots in general
+#make them custom and one by one to make sure they are nice
+
+```{r}
+library(EnhancedVolcano)
+
+###this is from the merged table
+#enhancedvolcano is quite nice
+#EnhancedVolcano(deg_merged,
+              #  lab = deg_merged$gene_name,
+               # x = 'cfr_GERALT_vs_OPTIOX_log2FC',
+              #  y = 'cfr_GERALT_vs_OPTIOX_padj',
+               # pCutoff = 0.05,
+              #  FCcutoff = 1.5,
+               # title = 'GERALT vs OPTIOX',
+              #  subtitle = 'Volcano Plot',
+               # caption = 'Cutoff: padj < 0.05 & |log2FC| > 1.5')
+
+#create a name vector for colors
+ok_pal <- c("Up" = "#CC79A7", "Down" = "#009E73", "NS" = "grey70")
+
+EnhancedVolcano(deg_results_list_preprocessed$cfr_CIRIvsOPTIOX,
+                lab = deg_results_list_preprocessed$cfr_CIRIvsOPTIOX$gene_name,
+                x = 'log2FoldChange',
+                y = 'padj',
+                pCutoff = 0.05,
+                FCcutoff = log2(2),
+                title = 'CIRI vs OPTIOX',
+                subtitle = 'Volcano Plot',
+                caption = 'Cutoff: padj < 0.05 & |log2FC| > 1',
+                pointSize = 2.0,
+                #labSize = 3, 
+  ###add colors
+  colCustom = ok_pal[deg_results_list_preprocessed$cfr_CIRIvsOPTIOX$direction],
+  colAlpha=0.5,
+  # --- labeling options ---
+  drawConnectors = T,            # add arrow lines to labels
+  widthConnectors = 0.1,            # arrow thickness
+  colConnectors = 'black',
+  # --- label appearance ---
+  labSize = 2.5,                    # font size for labels
+  boxedLabels = F,               # optional: draw boxes around labels
+  max.overlaps = 15,                # control overlap density
+  # --- control which genes to label ---
+  #selectLab = head(
+   # deg_results_list_preprocessed$cfr_CIRIvsOPTIOX$gene_name[
+    #  order(deg_results_list_preprocessed$cfr_CIRIvsOPTIOX$padj)
+    #],
+    #60                             # label top 20 most significant genes
+ # ),
+  #legendPosition = 'right',
+  legendLabSize = 10,
+  legendIconSize = 3.5,
+  borderWidth = 0.6,
+  axisLabSize = 12
+  )+
+ annotate("text",
+           x = -10,  # adjust based on your FC range
+           y = max(-log10(deg_results_list_preprocessed$cfr_CIRIvsOPTIOX$padj), na.rm = TRUE) * 0.9,
+           label = "OPTIOX",
+           hjust = 0, size = 4, fontface = "bold", colour = "black") +
+  annotate("text",
+           x = 10,   # adjust based on your FC range
+           y = max(-log10(deg_results_list_preprocessed$cfr_CIRIvsOPTIOX$padj), na.rm = TRUE) * 0.9,
+           label = "CIRI",
+           hjust = 1, size = 4, fontface = "bold", colour = "black")+
+theme(
+  panel.background = element_rect(fill = "white", colour = "white"),
+  plot.background  = element_rect(fill = "white", colour = "white"),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  axis.line        = element_line(colour = "black"),
+  legend.background = element_rect(fill = "white", colour = "white")
+)
+
+ggsave(filename = paste0(fname_prefix_volcano_deseq2, "_", "CIRIvsOPTIOX.pdf"),
+     width = 6, height = 7)
+
+EnhancedVolcano(deg_results_list_preprocessed$cfr_NTCvshiPSCs,
+                lab = deg_results_list_preprocessed$cfr_NTCvshiPSCs$gene_name,
+                x = 'log2FoldChange',
+                y = 'padj',
+                pCutoff = 0.05,
+                FCcutoff = log2(2),
+                title = 'NTC vs hiPSCs',
+                subtitle = 'Volcano Plot',
+                caption = 'Cutoff: padj < 0.05 & |log2FC| > 1',
+                pointSize = 2.0,
+                #labSize = 3, 
+  ###add colors
+  colCustom = ok_pal[deg_results_list_preprocessed$cfr_NTCvshiPSCs$direction],
+  colAlpha=0.5,
+  # --- labeling options ---
+  drawConnectors = TRUE,            # add arrow lines to labels
+  widthConnectors = 0.1,            # arrow thickness
+  colConnectors = 'black',
+  # --- label appearance ---
+  labSize = 2.5,                    # font size for labels
+  boxedLabels = F,               # optional: draw boxes around labels
+  max.overlaps = 15,                # control overlap density
+  # --- control which genes to label ---
+  #selectLab = head(
+   # deg_results_list_preprocessed$cfr_TT2MN_vs_TMM$gene_name[
+    #  order(deg_results_list_preprocessed$cfr_TT2MN_vs_TMM$padj)
+    #],
+    #60                             # label top 20 most significant genes
+ # ),
+  #legendPosition = 'right',
+  legendLabSize = 10,
+  legendIconSize = 3.5,
+  borderWidth = 0.6,
+  axisLabSize = 12
+  )+
+ annotate("text",
+           x = -5,  # adjust based on your FC range
+           y = max(-log10(deg_results_list_preprocessed$cfr_NTCvshiPSCs$padj), na.rm = TRUE) * 0.9,
+           label = "iPSC",
+           hjust = 0, size = 4, fontface = "bold", colour = "black") +
+  annotate("text",
+           x = 5,   # adjust based on your FC range
+           y = max(-log10(deg_results_list_preprocessed$cfr_NTCvshiPSCs$padj), na.rm = TRUE) * 0.9,
+           label = "NTC",
+           hjust = 1, size = 4, fontface = "bold", colour = "black")+
+theme(
+  panel.background = element_rect(fill = "white", colour = "white"),
+  plot.background  = element_rect(fill = "white", colour = "white"),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  axis.line        = element_line(colour = "black"),
+  legend.background = element_rect(fill = "white", colour = "white")
+)
+ggsave(filename = paste0(fname_prefix_volcano_deseq2, "_", "NTCvshiPSCs.pdf"),
+     width = 6, height = 7)
+
+
+
+```
+
+
+####calculate nb of DEGs per comparison
+
+```{r}
+# Extract only the *_direction columns
+direction_cols <- grep("_direction$", colnames(deg_merged), value = TRUE)
+
+# Build a long-format table (gene_ID, gene_name, comparison, direction)
+deg_long <- deg_merged %>%
+  select(gene_ID, gene_name, all_of(direction_cols)) %>%
+  pivot_longer(
+    cols = all_of(direction_cols),
+    names_to = "comparison",
+    values_to = "direction"
+  ) %>%
+  mutate(
+    # clean comparison name (remove "_direction" suffix)
+    comparison = str_remove(comparison, "_direction$")
+  )
+
+# Count Up / Down / NS per comparison
+deg_summary <- deg_long %>%
+  group_by(comparison, direction) %>%
+  summarise(n_genes = n(), .groups = "drop") %>%
+  # optional: pivot wider to have separate columns for Up/Down/NS
+  pivot_wider(names_from = direction, values_from = n_genes, values_fill = 0) %>%
+  arrange(comparison)
+
+print(deg_summary)
+
+write.table(
+  deg_summary,
+  file = paste0(fname_prefix_csv_deseq2, "_DEG_summary_counts.txt"),
+  sep = "\t", quote = FALSE, row.names = FALSE
+)
+
+g=as.data.frame(t(deg_summary))
+colnames(g)=g[1,]
+g=g[-1,]
+g$direction=rownames(g)
+
+deg_summary_long <- deg_summary %>%
+  pivot_longer(cols = c(Up, Down, NS),
+               names_to = "direction", values_to = "count")
+
+ggplot(deg_summary_long, aes(x = comparison, y = count, fill = direction)) +
+  geom_bar(stat = "identity", position = "stack") +
+  coord_flip() +
+  labs(
+    title = "DEG summary per comparison",
+    x = "",
+    y = "Number of genes"
+  ) +
+  scale_fill_manual(values = c("Up" = "#CC79A7", "Down" = "#009E73", "NS" = "grey70")) +
+  theme_bw()
+ggsave(filename = paste0(fname_prefix_volcano_deseq2, "_DEG_summary_barplot.pdf"),
+     width = 8, height = 6)
+
+
+```
+
+
+###now run GSEA analisis in general on general signatures
+
+```{r}
+
+####make gene list to study
+
+library(clusterProfiler)
+library(enrichplot)
+library(org.Hs.eg.db)
+library(enrichplot)
+library(DOSE)
+
+set_min_n_genes=5
+
+comparisons=c("cfr_CIRIvsOPTIOX",
+              "cfr_NTCvshiPSCs")
+
+genes_cfr_CIRIvsOPTIOX=subset(de_stats,de_stats$cfr_CIRIvsOPTIOX_direction!="NS")
+genes_cfr_NTCvshiPSCs=subset(de_stats,de_stats$cfr_NTCvshiPSCs_direction!="NS")
+
+genes <- as.numeric(genes_cfr_NTCvshiPSCs$cfr_NTCvshiPSCs_log2FC)
+names(genes) <- genes_cfr_NTCvshiPSCs$gene_name
+genes <- sort(genes, decreasing = TRUE)
+genes_cfr_NTCvshiPSCs=genes
+
+genes <- as.numeric(genes_cfr_CIRIvsOPTIOX$cfr_CIRIvsOPTIOX_log2FC)
+names(genes) <- genes_cfr_CIRIvsOPTIOX$gene_name
+genes <- sort(genes, decreasing = TRUE)
+genes_cfr_CIRIvsOPTIOX=genes
+
+
+
+gene_sets_GSEA <- list(
+  "cfr_CIRIvsOPTIOX" = genes_cfr_CIRIvsOPTIOX,
+  "cfr_NTCvshiPSCs"    = genes_cfr_NTCvshiPSCs
+)
+
+# Ensure each element is a named numeric vector (values = logFC, names = SYMBOL)
+stopifnot(all(sapply(gene_sets_GSEA, function(x) is.numeric(x) && !is.null(names(x)))))
+
+# Map SYMBOL -> ENTREZ, then rebuild ranked vectors in ENTREZ space
+symbol_to_entrez <- suppressMessages(bitr(
+  unique(unlist(lapply(gene_sets_GSEA, names))),
+  fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Hs.eg.db
+))
+
+gsea_list   <- list()
+GSEA_tables <- list()
+
+for (nm in names(gene_sets_GSEA)) {
+  ranks_sym <- gene_sets_GSEA[[nm]]
+
+  # join to map to ENTREZ
+  df <- data.frame(SYMBOL = names(ranks_sym), rank = as.numeric(ranks_sym))
+  df2 <- merge(df, symbol_to_entrez, by="SYMBOL")
+  if (!nrow(df2)) next
+
+  # deduplicate ENTREZ if necessary (keep max |rank|)
+  df2 <- df2[order(-abs(df2$rank)), ]
+  df2 <- df2[!duplicated(df2$ENTREZID), ]
+
+  ranks_entrez <- df2$rank
+  names(ranks_entrez) <- df2$ENTREZID
+  ranks_entrez <- sort(ranks_entrez, decreasing = TRUE)
+
+  gsea <- gseGO(geneList      = ranks_entrez,
+                OrgDb         = org.Hs.eg.db,
+                keyType       = "ENTREZID",
+                ont           = "BP",
+                minGSSize     = set_min_n_genes,#place this automatic
+                maxGSSize     = 500,
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 1,
+                nPermSimple = 10000,# readable=TRUE,
+                verbose       = FALSE, by = "fgsea")
+  
+gsea_readable <- setReadable(gsea, OrgDb = org.Hs.eg.db, keyType = "ENTREZID")
+
+  gsea_list[[nm]]   <- gsea
+  GSEA_tables[[nm]] <- as.data.frame(gsea_readable)
+}
+
+# filter significant terms
+# Make a new list of GSEA results filtered by significance
+gsea_sig_list <- lapply(gsea_list, function(gsea_obj) {
+  if (is.null(gsea_obj)) return(NULL)
+  df <- gsea_obj@result
+  if (is.null(df) || !nrow(df)) return(NULL)
+  
+  # filter by adjusted p-value < 0.05
+  df_sig <- dplyr::filter(df, p.adjust < 0.05)
+  
+  # replace the result slot with filtered df
+  gsea_obj@result <- df_sig
+  gsea_obj
+})
+
+# 1) Write every GO table to CSV: GO_<name>.csv
+if (length(GSEA_tables)) {
+  for (nm in names(GSEA_tables)) {
+    if (is.null(GSEA_tables[[nm]]) || !nrow(GSEA_tables[[nm]])) next
+    # file <- file.path(out_dir, paste0(fname_prefix_GO, "_GO_", nm, ".csv"))
+    file <- paste0(fname_prefix_csv_deseq2, "_GSEA_DEG_", nm, ".csv")
+    write.csv(GSEA_tables[[nm]], file, row.names = FALSE)
+    message("Wrote: ", file)
+  }
+}
+
+# Helper: save ggplot if it exists
+.save_plot <- function(p, file, w=8, h=10) {
+  if (!is.null(p) && inherits(p, "ggplot")) {
+    ggsave(filename = file, plot = p, width = w, height = h)
+    message("Saved: ", file)
+  }
+}
+
+# Make a dotplot per GSEA result in gsea_list
+plot_gsea_dotplots <- function(gsea_list, fname_prefix, show_k = 10, width=8, height=6) {
+  if (!length(gsea_list)) {
+    message("gsea_list is empty.")
+    return(invisible(NULL))
+  }
+
+  for (nm in names(gsea_list)) {
+    g <- gsea_list[[nm]]
+    # Skip NULL or empty results
+    df <- tryCatch(as.data.frame(g), error = function(e) NULL)
+    if (is.null(df) || !nrow(df)) {
+      message("Skipping ", nm, " (no terms).")
+      next
+    }
+
+    k <- min(show_k, nrow(df))
+
+    # GSEA-friendly dotplot: split by .sign for up/down, order by NES
+    p <- tryCatch(
+      dotplot(g, showCategory = k, split = ".sign", orderBy = "NES") +
+        facet_grid(. ~ .sign),
+      error = function(e) { message("Plot error in ", nm, ": ", e$message); NULL }
+    )
+
+    out_pdf <- paste0(fname_prefix, "_GSEA_", nm, "_dotplot.pdf")
+    .save_plot(p, out_pdf, w = width, h = height)
+  }
+}
+
+plot_gsea_dotplots(gsea_list, fname_prefix = fname_prefix_gene_GO_deseq2, show_k = 10)
+
+
+# Vector of target GO IDs ###ID studied before
+go_ids <- c("GO:0007059","GO:0030855","GO:002240","GO:0070252","GO:0006936") # 
+
+# Function: loop through GO IDs for a given contrast
+save_gsea_plots <- function(gsea_res, contrast_name, go_ids, prefix, width=8, height=6) {
+  for (go_id in go_ids) {
+    if (go_id %in% gsea_res@result$ID) {
+      p <- gseaplot2(gsea_res, geneSetID = go_id, title = go_id)
+      out_file <- paste0(prefix, "_", contrast_name, "_", gsub(":", "-", go_id), ".pdf")
+      ggsave(out_file, plot = p, width = width, height = height)
+      message("Saved: ", out_file)
+    } else {
+      message("GO term ", go_id, " not found in ", contrast_name)
+    }
+  }
+}
+
+# Example usage:
+save_gsea_plots(gsea_list[["cfr_CIRIvsOPTIOX"]], "cfr_CIRIvsOPTIOX", go_ids, fname_prefix_gene_GO_deseq2)
+save_gsea_plots(gsea_list[["cfr_NTCvshiPSCs"]], "cfr_NTCvshiPSCs", go_ids, fname_prefix_gene_GO_deseq2)
+
+# Vector of target GO IDs for plotting
+#go_ids <- c("GO:0042551","GO:0007492","GO:0007498")#neuron migration
+
+# Loop over and plot#
+#for (go_id in go_ids) {
+ # if (go_id %in% gsea_list[["3vsall"]]@result$ID) {
+  #  print(gseaplot2(gsea_list[["3vsall"]], geneSetID = go_id, title = go_id))
+  #} else {
+   # message(paste("GO term", go_id, "not found in results."))
+  #}
+#}
+
+
+#dotplot(gsea, showCategory = 10, split = ".sign",orderBy = "enrichmentScore") + facet_grid(.~.sign)
+#ggsave(filename = paste0(fname_prefix_ATAC_GO, "_", "_GSEA.pdf"),
+ #    width = 8, height = 8)
+
+### Plotting GSEA results
+#dotplot(gsea_list[["3vsall"]], showCategory = 10, split = ".sign",orderBy = "enrichmentScore") + facet_grid(.~.sign)
+#ggsave(filename = paste0(fname_prefix_GO, "_", "_GSEA.pdf"),
+ #    width = 8, height = 8)
+
+
+Rdata_filename = paste0(fname_prefix_gene_GO_deseq2, "_GSEA_analysis_DEG.RData")
+save(gene_sets_GSEA,gsea_list,GSEA_tables,de_stats,gsea_readable,
+     file = Rdata_filename)
+
+gsea_res <- gsea_list[["cfr_CIRIvsOPTIOX"]]
+
+# Pick a GO ID manually or find it by keyword
+term_to_plot <- c("GO:0061061")  # or
+#term_to_plot <- grep("muscle cell differentiation", gsea_res@result$Description, value = TRUE)[13] #NB this is not the ID but Description
+
+###this is top for optiox
+
+if (term_to_plot %in% gsea_res@result$ID) {
+  p <- gseaplot2(
+    gsea_res,
+    geneSetID = term_to_plot,
+    title = gsea_res@result$Description[gsea_res@result$ID == term_to_plot],
+    subplots = 1:3,  # Enrichment curve + NES info
+    color = "firebrick",
+    pvalue_table = TRUE
+  )
+  print(p)
+} else {
+  message("GO term ", term_to_plot, " not found in GSEA results.")
+}
+
+ggsave(filename = paste0(fname_prefix_gene_GO_deseq2, "_", "GSEA_muscle_cell_differentiation_CIRIvsOPTIOX.pdf"),
+    width = 8,
+    height = 4)
+
+###now try place multiple courves in one plot
+gsea_res <- gsea_list[["cfr_CIRIvsOPTIOX"]]
+
+# Pick a GO ID manually or find it by keyword
+#term_to_plot <- c("GO:0042692","GO:0007059","GO:0030855")  # or
+term_to_plot=c("GO:1903047","GO:0014706","GO:0008544")
+valid_terms <- intersect(term_to_plot, gsea_res@result$ID)
+
+if (length(valid_terms) == 0) {
+  stop("None of the requested GO terms are present in GSEA results.")
+}
+
+# Define colors (must match number of terms)
+palette <- c("#E69F00","#000000","#009292")
+#palette <- c("#000000","#009292")
+
+
+# Plot multiple enrichment curves
+p <- gseaplot2(
+  gsea_res,
+  geneSetID   = valid_terms,
+  subplots    = 1:2,
+  color       = palette[seq_along(valid_terms)],
+  base_size   = 14,
+  pvalue_table = T   # not available with multiple curves
+)
+
+print(p)
+
+ggsave(filename = paste0(fname_prefix_gene_GO_deseq2, "_", "GSEA_CIRIvsOPTIOX.pdf"),
+    width = 8,
+    height = 5)
+```
+
+####Running GSEA on a custom gene list
+
+###create gene list
+
+```{r}
+# ============================================================
+# HUMAN SKELETAL MUSCLE & iPSC-MYOGENIC SIGNATURES (v2025)
+# Integrated from Chemello et al. 2025, De Micheli et al. 2020,
+# Murgia et al. 2021, Hicks et al. 2025, Front Cell Dev Biol 2025,
+# and classic literature (Schiaffino & Reggiani 2011; Bodine 2001).
+# ============================================================
+
+gs <- list(
+
+  # ===============================
+  # CELL CYCLE / RIBOSOME TONE
+  # ===============================
+  cellcycle_s = c("MCM5","PCNA","TYMS","FEN1","MCM2","MCM4","RRM1","UNG","GINS2",
+                  "MCM6","CDCA7","DTL","PRIM1","UHRF1","HELLS","RFC2","RPA2","NASP",
+                  "RAD51","CHEK1","ORC6","MCM3","MCM7","MLF1IP","BRIP1","E2F8"),
+  # Ref: Seurat S.Score; Whitfield et al., Cell 2002; Trapnell et al., Nat Biotech 2014
+
+  cellcycle_g2m = c("HMGB2","CDK1","NUSAP1","UBE2C","BIRC5","TPX2","TOP2A","NDC80",
+                    "CKS2","NUF2","CKS1B","MKI67","TMPO","CENPF","TACC3","SMC4",
+                    "CCNB2","CKAP2L","CKAP2","AURKB","BUB1","KIF11","ANP32E","TUBB4B",
+                    "GTSE1","KIF20B","HJURP","CDCA3","CDC20","TTK","CDC45","CDC6",
+                    "EXO1","TIPIN","DSCC1","BLM","CASP8AP2","USP1","CLSPN","POLA1",
+                    "CHAF1B","BRCA1","EXOSC2","USP16","POLD3","MSH2","ATAD2","RAD51AP1","RRM2"),
+  # Ref: Seurat G2M.Score; Whitfield et al., Cell 2002; Trapnell 2014
+  
+  ribosome_tone = c("RPLP0","RPL3","RPL5","RPL7","RPL11","RPL13A","RPL23A",
+                    "RPS3","RPS6","RPS8","RPS12","RPS18","RPS27","NCL","FBL",
+                    "NPM1","EIF4EBP1","MYC","DDIT4"),
+  # Ref: Murgia et al. 2021; Chemello et al. 2025 (fiber proteome core)
+
+  # ===============================
+  # FIBER-TYPE / METABOLIC PROGRAMS
+  # ===============================
+  fiber_type_I_slow = c("MYH7","TNNI1","TNNT1","MYL2","ATP2A2","CKMT2","MB",
+                        "COX7A1","COX6A2","PPARGC1A","SDHA","CS","SLC25A4",
+                        "MYBPC1","MYL3","PDK4","ESRRA","NDUFA10"),
+  # Ref: Schiaffino & Reggiani 2011; Chemello et al. 2025; Murgia et al. 2021
+
+  fiber_type_IIa_fast = c("MYH2","TNNI2","TNNT3","MYL1","ATP2A1","ACTN3","TPM2",
+                          "PVALB","LDHA","PKM","PFKM","ENO1","PGAM2","ALDOA",
+                          "CKM","DMD","CASQ1"),
+  # Ref: Murgia et al. 2021; Bloemberg & Quadrilatero 2012; Chemello 2025
+
+  fiber_type_IIx_fast = c("MYH1","ACTN3","MYLK2","TNNT3","TNNI2","ATP2A1","TPM2",
+                          "CKM","LDHA","ENO1","PFKM","MYH4"),
+  # Ref: Murgia 2021; Uhlén et al., HPA 2021
+
+  developmental_embryonic_perinatal = c("MYH3","MYH8","MYL4","TNNI1","TNNT1",
+                                        "MYOG","MYOD1","MEF2C","DES","MYMK",
+                                        "MYMX","CHRNG","ACTA1","CKM"),
+  # Ref: Chal et al. 2015; Hicks et al. 2025; Sampath et al. 2018
+
+  sarcomere_core = c("TTN","NEB","ACTN2","TCAP","MYBPC1","MYBPC2","MYL1","MYL2",
+                     "TNNI1","TNNI2","TNNT1","TNNT3","TPM1","TPM2","MYOM1","MYOM2","CSRP3"),
+  # Ref: Lundberg et al. 2019; GO:0030016 "myofibril"
+
+  calcium_excitation_contraction = c("RYR1","CACNA1S","ATP2A1","ATP2A2","CASQ1",
+                                     "CASQ2","SLN","PLN","TRDN","STAC3","JPH1",
+                                     "CAMK2A","CAMK2B","CAV3"),
+  # Ref: Protasi et al. 2021; Jorgensen et al. 2023 (hiPSC EC coupling)
+
+  oxidative_mitochondrial = c("SDHA","SDHB","UQCRC1","NDUFA9","NDUFS1","COX4I1",
+                              "COX6A2","ATP5F1A","ATP5MC1","CKMT2","SLC25A4",
+                              "PPARGC1A","TFAM","CS","ACADM","NDUFB8","CYCS","PDHA1"),
+  # Ref: Lin et al. Nature 2002; Chemello et al. 2025; Murgia 2021
+
+  glycolytic_fast = c("HK2","PFKM","ALDOA","TPI1","GAPDH","PGK1","PGAM2","ENO1",
+                      "PKM","LDHA","PDK1","SLC2A4","PFKFB3","ENO3","MYL1"),
+  # Ref: Schiaffino & Reggiani 2011; Chemello 2025
+
+  # ===============================
+  # STEM / MYOGENIC LINEAGES
+  # ===============================
+  satellite_cell_core = c("PAX7","VCAM1","ITGA7","CXCR4","MYF5","CDH15","SDC4",
+                          "EGFR","NCAM1","SPRY1","MUSTN1","NOS1"),
+  # Ref: De Micheli et al. 2020; Yin et al. 2013; GSE143437 atlas
+
+  myoblast_proliferation_cycle = c("MYOD1","MYF5","MKI67","TOP2A","PCNA","CCNB1",
+                                   "CDK1","E2F1","NUSAP1","HMGB2","UBE2C","AURKB","RRM2"),
+  # Ref: Hicks et al. 2025; Trapnell et al. 2014 pseudotime
+
+  myotube_differentiation_fusion = c("MYOG","MEF2C","MYMK","MYMX","MYH3","MYH8",
+                                     "CKM","DES","DNM2","ACTA1"),
+  # Ref: Chal et al. 2015; Sampath et al. 2018; Hicks 2025
+
+  myogenic_regulators_axis = c("PAX3","PAX7","MYF5","MYOD1","MYOG","MEF2C","MYF6"),
+  # Ref: Weintraub 1991; Rudnicki et al. 1993
+
+  # ===============================
+  # NMJ / ECM / NICHE
+  # ===============================
+  neuromuscular_junction = c("AGRN","LRP4","MUSK","DOK7","RAPSN","COLQ","CHRNA1",
+                             "CHRNB1","CHRND","CHRNE","CHRNG","ACHE","UTRN"),
+  # Ref: Burden et al. 2018; Cantor et al. 2022 (hiPSC NMJ coculture)
+
+  muscle_ecm_basement = c("LAMA2","LAMC1","COL6A1","COL6A2","COL6A3","COL1A1",
+                          "COL1A2","COL3A1","FN1","SPP1","LUM","DCN","DAG1",
+                          "ITGA7","THY1","COL4A1","COL4A2","COL5A1"),
+  # Ref: De Micheli et al. 2020; Saini et al. 2021
+
+  fibro_adipogenic_progenitors = c("PDGFRA","COL1A1","COL3A1","DCN","LUM","CXCL14",
+                                   "THY1","GPC6","FBN1","DPT"),
+  # Ref: De Micheli 2020; Front Cell Dev Biol 2025
+
+  atrophy_stress = c("FBXO32","TRIM63","DDIT4","GADD45A","ATF4","FOXO3","PSMA1",
+                     "PSMB1","SESN1","SESN3","EIF4EBP1","PPP1R15A"),
+  # Ref: Bodine et al. 2001; Gomes et al. 2001; Milan et al. 2021
+
+  # ===============================
+  # PLURIPOTENCY → MYOGENIC (hiPSC/hESC)
+  # ===============================
+  pluripotency_core = c("POU5F1","NANOG","SOX2","PRDM14","DPPA2","DPPA4","ZFP42",
+                        "DNMT3A","DNMT3B"),
+  # Ref: Theunissen et al. 2016; Nichols & Smith 2012
+
+  naive_pluripotency = c("KLF17","KLF4","TFCP2L1","DNMT3L","DPPA3","TBX3","ESRRB","SUSD2"),
+  # Ref: Collier et al. 2022; Pastor et al. 2018
+
+  mesoderm_specification = c("MESP1","PDGFRA","KDR","ISL1","HAND1","HAND2","GATA4",
+                             "TBX5","NKX2-5","MEF2C","FGF8","EOMES","TBXT"),
+  # Ref: Chan et al. 2013; Loh et al. 2016; Hicks 2025
+
+  early_myogenic_commitment = c("PAX3","PAX7","MYF5","MYOD1","MET","ITGA7","FGFR4","LBX1","MYOG")
+  # Ref: Chal et al. 2015; Hicks et al. 2025
+)
+```
+
+####Running GSEA on the custom gene list
+
+```{r}
+
+###one by one GSEA
+#gene_ranks <- genes_cfr_GERALT_vs_OPTIOX
+#gene_ranks <- sort(gene_ranks, decreasing = TRUE)
+
+#term2gene <- stack(gs)
+#colnames(term2gene) <- c("gene", "term")
+#term2gene <- term2gene[, c("term", "gene")]
+
+# Run GSEA
+#gsea_custom <- GSEA(
+ # geneList = gene_ranks,
+  #TERM2GENE = term2gene,
+  #minGSSize = 5,
+  #maxGSSize = 500,
+  #pvalueCutoff = 1,
+  #verbose = FALSE,
+  #seed = TRUE
+#)
+
+#as.data.frame(gsea_custom)[, c("ID", "Description", "NES", "pvalue", "p.adjust")]
+
+# Parameters
+set_min_n_genes <- 3
+p_cutoff <- 1
+
+# --- Prepare TERM2GENE mapping from your gene sets ---
+term2gene <- stack(gs)
+colnames(term2gene) <- c("gene", "term")
+term2gene <- term2gene[, c("term", "gene")]
+
+# --- Initialize result containers ---
+gsea_list_custom   <- list()
+GSEA_tables_custom <- list()
+
+# --- Loop over each comparison in your ranked gene lists ---
+for (nm in names(gene_sets_GSEA)) {
+  message("Running custom GSEA for: ", nm)
+  
+  # Extract ranked genes (log2FC values)
+  gene_ranks <- gene_sets_GSEA[[nm]]
+  gene_ranks <- sort(gene_ranks, decreasing = TRUE)
+  
+  # Run clusterProfiler::GSEA on your custom gene sets
+  gsea_custom <- tryCatch({
+    GSEA(
+      geneList      = gene_ranks,
+      TERM2GENE     = term2gene,
+      minGSSize     = set_min_n_genes,
+      maxGSSize     = 500,
+      pAdjustMethod = "BH",
+      pvalueCutoff  = p_cutoff,
+      verbose       = FALSE,
+      seed          = TRUE
+    )
+  }, error = function(e) {
+    message("Error in ", nm, ": ", e$message)
+    NULL
+  })
+  
+  if (is.null(gsea_custom) || nrow(as.data.frame(gsea_custom)) == 0) {
+    message("No enrichment found for ", nm)
+    next
+  }
+  
+  # Save objects
+  gsea_list_custom[[nm]]   <- gsea_custom
+  GSEA_tables_custom[[nm]] <- as.data.frame(gsea_custom)
+}
+
+# --- Filter significant results (adjusted p < 0.05) ---
+gsea_sig_list_custom <- lapply(gsea_list_custom, function(gsea_obj) {
+  if (is.null(gsea_obj)) return(NULL)
+  df <- gsea_obj@result
+  if (is.null(df) || !nrow(df)) return(NULL)
+  df_sig <- dplyr::filter(df, p.adjust < 0.05)
+  gsea_obj@result <- df_sig
+  gsea_obj
+})
+
+# --- Write GSEA tables to CSV ---
+if (length(GSEA_tables_custom)) {
+  for (nm in names(GSEA_tables_custom)) {
+    df <- GSEA_tables_custom[[nm]]
+    if (is.null(df) || !nrow(df)) next
+    
+    file <- paste0(fname_prefix_csv_deseq2, "_CustomGSEA_", nm, ".csv")
+    write.csv(df, file, row.names = FALSE)
+    message("Wrote: ", file)
+  }
+}
+
+# --- Helper function to save plots ---
+.save_plot <- function(p, file, w = 8, h = 10) {
+  if (!is.null(p) && inherits(p, "ggplot")) {
+    ggsave(filename = file, plot = p, width = w, height = h)
+    message("Saved: ", file)
+  }
+}
+
+# --- Generate dotplots for each comparison ---
+plot_gsea_dotplots_custom <- function(gsea_list, fname_prefix, show_k = 10, width = 8, height = 6) {
+  if (!length(gsea_list)) {
+    message("gsea_list is empty.")
+    return(invisible(NULL))
+  }
+  
+  for (nm in names(gsea_list)) {
+    g <- gsea_list[[nm]]
+    
+    # Safely convert to data frame
+    df <- tryCatch(as.data.frame(g), error = function(e) NULL)
+    if (is.null(df) || !nrow(df)) {
+      message("Skipping ", nm, " (no terms).")
+      next
+    }
+    
+    k <- min(show_k, nrow(df))
+    
+    # --- FIXED: added missing closing parenthesis and split handling ---
+    p <- tryCatch({
+      dotplot(
+        g,
+        showCategory = k,
+        split = ".sign",
+        orderBy = "NES",
+        title = paste0("Custom GSEA: ", nm)
+      ) + facet_grid(. ~ .sign)
+    },
+    error = function(e) {
+      message("Plot error in ", nm, ": ", e$message)
+      NULL
+    })
+    
+    # Save PDF
+    out_pdf <- paste0(fname_prefix, "_CustomGSEA_", nm, "_dotplot.pdf")
+    .save_plot(p, out_pdf, w = width, h = height)
+  }
+}
+
+plot_gsea_dotplots_custom(gsea_list_custom, fname_prefix = fname_prefix_gene_GO_deseq2, show_k = 10)
+
+# --- Save the workspace for reproducibility ---
+Rdata_filename <- paste0(fname_prefix_gene_GO_deseq2, "_CustomGSEA_analysis.RData")
+save(gsea_list_custom, GSEA_tables_custom, gsea_sig_list_custom, gs, term2gene, file = Rdata_filename)
+message("Saved RData: ", Rdata_filename)
+
+```
+###make enrichment plots for specific gene sets
+
+```{r}
+###now try place multiple courves in one plot
+gsea_res <- gsea_list_custom[["cfr_CIRIvsOPTIOX"]]
+
+# Pick a GO ID manually or find it by keyword
+term_to_plot <- c("sarcomere_core","fiber_type_IIa_fast","early_myogenic_commitment")  # or
+valid_terms <- intersect(term_to_plot, gsea_res@result$ID)
+
+if (length(valid_terms) == 0) {
+  stop("None of the requested GO terms are present in GSEA results.")
+}
+
+# Define colors (must match number of terms)
+palette <- c("#E69F00","#000000","#009292")
+
+# Plot multiple enrichment curves
+p <- gseaplot2(
+  gsea_res,
+  geneSetID   = valid_terms,
+  subplots    = 1:2,
+  color       = palette[seq_along(valid_terms)],
+  base_size   = 14,
+  pvalue_table = T   # not available with multiple curves
+)
+
+print(p)
+
+ggsave(filename = paste0(fname_prefix_gene_GO_deseq2, "_", "GSEA_CIRIvsOPTIOX_custom.pdf"),
+    width = 8,
+    height = 5)
+```
+
+
+###make volcano plot by showing a gene signature
+#CIRI vs OPTIOX
+
+```{r}
+# define the signature genes to label
+my_signature <- gs$sarcomere_core  # example gene set
+
+# prepare the data
+deg_df <- deg_results_list_preprocessed$cfr_CIRIvsOPTIOX
+
+# define thresholds
+fc_cutoff <- log2(2)
+padj_cutoff <- 0.05
+
+# filter to keep only genes that are significant and in the signature
+sig_in_data <- deg_df %>%
+  filter(
+    gene_name %in% my_signature &
+      padj < padj_cutoff &
+      abs(log2FoldChange) > fc_cutoff
+  ) %>%
+  pull(gene_name)
+
+# color palette (same as before)
+ok_pal <- c("Up" = "#CC79A7", "Down" = "#009E73", "NS" = "grey70")
+
+# volcano plot
+EnhancedVolcano(
+  deg_df,
+  lab = deg_df$gene_name,
+  x = "log2FoldChange",
+  y = "padj",
+  pCutoff = padj_cutoff,
+  FCcutoff = fc_cutoff,
+  title = "CIRI vs OPTIOX",
+  subtitle = "Volcano Plot: sarcomere core signature genes",
+  caption = "Cutoff: padj < 0.05 & |log2FC| > 1",
+  pointSize = 2.0,
+  colCustom = ok_pal[deg_df$direction],
+  colAlpha = 0.5,
+  drawConnectors = TRUE,
+  widthConnectors = 0.3,
+  colConnectors = "black",
+  boxedLabels = TRUE,
+  labSize = 2.5,
+  max.overlaps = 50,
+  # --- highlight only your signature *and significant* genes ---
+  selectLab = sig_in_data,
+  legendLabSize = 10,
+  legendIconSize = 3.5,
+  borderWidth = 0.6,
+  axisLabSize = 12
+) +
+  annotate(
+    "text",
+    x = -10,
+    y = max(-log10(deg_df$padj), na.rm = TRUE) * 0.9,
+    label = "OPTIOX",
+    hjust = 0, size = 4, fontface = "bold", colour = "black"
+  ) +
+  annotate(
+    "text",
+    x = 10,
+    y = max(-log10(deg_df$padj), na.rm = TRUE) * 0.9,
+    label = "CIRI",
+    hjust = 1, size = 4, fontface = "bold", colour = "black"
+  ) +
+  theme(
+    panel.background = element_rect(fill = "white", colour = "white"),
+    plot.background = element_rect(fill = "white", colour = "white"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    legend.background = element_rect(fill = "white", colour = "white")
+  )
+
+ggsave(
+  filename = paste0(fname_prefix_volcano_deseq2, "_CIRI_OPTIOX_sarcomere_core_sigOnly.pdf"),
+  width = 6, height = 7
+)
+```
+
+###make volcano plot by showing a gene signature
+#GERALT vs OPTIOX gliycolitic (OPTIOX) and type 1 fibers (GERALT)
+
+```{r}
+# define the signature genes to label
+my_signature <- c(gs$sarcomere_core, gs$fiber_type_I_slow, gs$early_myogenic_commitment) # example gene set
+
+# prepare the data
+deg_df <- deg_results_list_preprocessed$cfr_CIRIvsOPTIOX
+
+# define thresholds
+fc_cutoff <- log2(2)
+padj_cutoff <- 0.05
+
+# filter to keep only genes that are significant and in the signature
+sig_in_data <- deg_df %>%
+  filter(
+    gene_name %in% my_signature &
+      padj < padj_cutoff &
+      abs(log2FoldChange) > fc_cutoff
+  ) %>%
+  pull(gene_name)
+
+# color palette (same as before)
+ok_pal <- c("Up" = "#CC79A7", "Down" = "#009E73", "NS" = "grey70")
+
+# volcano plot
+EnhancedVolcano(
+  deg_df,
+  lab = deg_df$gene_name,
+  x = "log2FoldChange",
+  y = "padj",
+  pCutoff = padj_cutoff,
+  FCcutoff = fc_cutoff,
+  title = "CIRI vs OPTIOX",
+  subtitle = "Volcano Plot: early myogenic,sarcomere core and type I slow fibers signature genes",
+  caption = "Cutoff: padj < 0.05 & |log2FC| > 1",
+  pointSize = 2.0,
+  colCustom = ok_pal[deg_df$direction],
+  colAlpha = 0.5,
+  drawConnectors = TRUE,
+  widthConnectors = 0.3,
+  colConnectors = "black",
+  boxedLabels = F,
+  labSize = 2.5,
+  max.overlaps = 50,
+  # --- highlight only your signature *and significant* genes ---
+  selectLab = sig_in_data,
+  legendLabSize = 10,
+  legendIconSize = 3.5,
+  borderWidth = 0.6,
+  axisLabSize = 12
+) +
+  annotate(
+    "text",
+    x = -10,
+    y = max(-log10(deg_df$padj), na.rm = TRUE) * 0.9,
+    label = "OPTIOX",
+    hjust = 0, size = 4, fontface = "bold", colour = "black"
+  ) +
+  annotate(
+    "text",
+    x = 10,
+    y = max(-log10(deg_df$padj), na.rm = TRUE) * 0.9,
+    label = "CIRI",
+    hjust = 1, size = 4, fontface = "bold", colour = "black"
+  ) +
+  theme(
+    panel.background = element_rect(fill = "white", colour = "white"),
+    plot.background = element_rect(fill = "white", colour = "white"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black"),
+    legend.background = element_rect(fill = "white", colour = "white")
+  )
+
+ggsave(
+  filename = paste0(fname_prefix_volcano_deseq2, "_CIRI_OPTIOX_early_sarcomeric_and _fibers_sigOnly.pdf"),
+  width = 6, height = 7
+)
+```
+
+####compute signature scores
+
+# ============================================================
+# Signature scores (module scores) + comparisons by cell_type
+# Uses vsd (VST), geneInfo_f (ENSG->symbol), meta (sample annotations)
+# ============================================================
+
+
+```{r}
+
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+
+# ---------- 1) Build SYMBOL-labeled expression matrix from vsd ----------
+expr <- assay(vsd)  # rows ~ ENSG + custom, cols = samples
+
+# ENSG -> SYMBOL map (strip version suffix if present)
+map <- geneInfo_f %>%
+  transmute(
+    ens = sub("\\..*$", "", gene_ID),
+    sym = gene_name
+  ) %>%
+  distinct() %>%
+  filter(!is.na(sym), sym != "")
+
+expr_df <- as.data.frame(expr) %>%
+  rownames_to_column("rid_raw") %>%
+  mutate(ens = sub("\\..*$", "", rid_raw)) %>%
+  left_join(map, by = "ens") %>%
+  filter(!is.na(sym), sym != "")
+
+# Collapse duplicate symbols (mean across duplicates)
+expr_sym <- expr_df %>%
+  select(-rid_raw, -ens) %>%
+  group_by(sym) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE), .groups = "drop")
+
+expr_sym_mat <- as.matrix(expr_sym[, -1])
+rownames(expr_sym_mat) <- expr_sym$sym
+
+# ---------- 2) Module score helper ----------
+score_module_z <- function(expr_mat, genes, min_genes = 3) {
+  genes <- intersect(genes, rownames(expr_mat))
+  if (length(genes) < min_genes) return(rep(NA_real_, ncol(expr_mat)))
+  m  <- expr_mat[genes, , drop = FALSE]
+  mz <- t(scale(t(m)))            # z per gene across samples
+  colMeans(mz, na.rm = TRUE)      # mean z per sample
+}
+
+# ---------- 3) Choose signatures to score ----------
+
+sig_list <- list(
+  # induction axis
+  pluripotency_core   = gs$pluripotency_core,
+  naive_pluripotency  = gs$naive_pluripotency,
+  mesoderm_spec       = gs$mesoderm_specification,
+  early_myogenic      = gs$early_myogenic_commitment,
+
+  # myogenic state / maturation
+  satellite_core      = gs$satellite_cell_core,
+  myotube_fusion      = gs$myotube_differentiation_fusion,
+  dev_embryo_peri     = gs$developmental_embryonic_perinatal,
+  sarcomere_core      = gs$sarcomere_core,
+  ec_coupling         = gs$calcium_excitation_contraction,
+
+  # metabolism / fiber programs (optional)
+  oxidative_mito      = gs$oxidative_mitochondrial,
+  glycolytic_fast     = gs$glycolytic_fast,
+  fiber_I_slow        = gs$fiber_type_I_slow,
+  fiber_IIa_fast      = gs$fiber_type_IIa_fast
+)
+
+# Quick overlap check (useful for debugging)
+overlap_n <- sapply(sig_list, \(g) length(intersect(g, rownames(expr_sym_mat))))
+print(overlap_n)
+
+# ---------- 4) Compute per-sample scores + combined indices ----------
+scores <- lapply(sig_list, \(g) score_module_z(expr_sym_mat, g)) %>% as.data.frame()
+scores$sample_ID <- colnames(expr_sym_mat)
+
+scores <- scores %>%
+  mutate(
+    pluripotency_off      = -pluripotency_core,
+    early_induction_on    = mesoderm_spec + early_myogenic,
+    early_induction_index = early_induction_on - pluripotency_core
+  ) %>%
+  left_join(meta, by = "sample_ID")
+
+# Optional: ensure name order & stable colors
+okabe_named <- c(
+  "NTC"    = "#000000",
+  "hiPSC"  = "#56B4E9",
+  "CIRI"   = "#CC79A7",
+  "OPTIOX" = "#E69F00"
+)
+
+order_cell_type=c("hiPSC","NTC","CIRI","OPTIOX")
+
+# If your meta uses different strings (e.g. "hiPSCs"), check and adjust:
+# unique(scores$name)
+
+# ---------- 5) Compare scores by cell_type (faceted), colored by name ----------
+# Choose which score(s) you want to visualize:
+score_vars <- c(
+  "early_induction_index",
+  "early_induction_on",
+  "pluripotency_core",
+  "pluripotency_off",
+  "naive_pluripotency",
+  "mesoderm_spec",
+  "early_myogenic",
+  "satellite_core",
+  "myotube_fusion",
+  "dev_embryo_peri",
+  "sarcomere_core",
+  "ec_coupling",
+  "oxidative_mito",
+  "glycolytic_fast",
+  "fiber_I_slow",
+  "fiber_IIa_fast"
+)
+
+scores_long <- scores %>%
+  select(sample_ID, name, replicate, condition, cell_type, all_of(score_vars)) %>%
+  pivot_longer(cols = all_of(score_vars), names_to = "signature", values_to = "score")
+
+p_scores <- ggplot(scores_long, aes(x = factor(name,levels=order_cell_type), y = score, color = name)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.2) +
+  geom_jitter( width = 0.15, size = 3) +
+  facet_wrap(~signature) +
+  scale_color_manual(values = okabe_named, drop = FALSE) +
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Signature scores by cell type",
+    x = "", y = "Module score (mean z across genes)"
+  )
+
+print(p_scores)
+
+ggsave(
+  filename = paste0(fname_prefix_gene_deseq2, "_SignatureScores_byCellType.pdf"),
+  plot = p_scores, width = 18, height = 15
+)
+
+# ---------- 6) Stats: CIRI vs OPTIOX within each cell_type for each signature ----------
+# (Uses Wilcoxon; no continuity correction; tiny n -> interpret carefully)
+tests_CIRI_OPTIOX <- scores_long %>%
+  filter(name %in% c("CIRI","OPTIOX")) %>%
+  group_by(signature) %>%
+  summarise(
+    n_CIRI   = sum(name=="CIRI"   & !is.na(score)),
+    n_OPTIOX = sum(name=="OPTIOX" & !is.na(score)),
+    p = ifelse(min(n_CIRI, n_OPTIOX) >= 2,
+               wilcox.test(score ~ name, exact=FALSE, correct=FALSE)$p.value,
+               NA_real_),
+    .groups="drop"
+  ) %>%
+  arrange(p)
+
+print(tests_CIRI_OPTIOX)
+
+write.table(
+  tests_CIRI_OPTIOX,
+  file = paste0(fname_prefix_csv_deseq2, "_SignatureScores_stats_CIRIvsOPTIOX_byCellType.txt"),
+  sep = "\t", quote = FALSE, row.names = FALSE
+)
+
+# ---------- 7) Stats: hiPSC vs NTC within each cell_type for each signature ----------
+tests_hiPSC_NTC <- scores_long %>%
+  filter(name %in% c("hiPSC", "NTC")) %>%
+  group_by(signature) %>%
+  summarise(
+    n_hiPSC = sum(name == "hiPSC" & !is.na(score)),
+    n_NTC   = sum(name == "NTC"   & !is.na(score)),
+    p = ifelse(min(n_hiPSC, n_NTC) >= 2,
+               wilcox.test(score ~ name, exact = FALSE, correct = FALSE)$p.value,
+               NA_real_),
+    .groups = "drop"
+  ) %>%
+  arrange(p)
+
+print(tests_hiPSC_NTC)
+
+write.table(
+  tests_hiPSC_NTC,
+  file = paste0(fname_prefix_csv_deseq2, "_SignatureScores_stats_hiPSCvsNTC_byCellType.txt"),
+  sep = "\t", quote = FALSE, row.names = FALSE
+)
+```
+
+
+
+
+
+
+
+
+
