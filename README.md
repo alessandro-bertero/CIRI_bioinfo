@@ -29,7 +29,7 @@ Code example for RStudio server:
 then go on the browser http://localhost:8080/
 
 
-## CIRI Analysis Pipeline
+## CIRI Analysis Pipeline <<https://github.com/MariaLuisaRatto/CIRI_bioinfo>>
 
 This repository contains an R-based pipeline for processing and analyzing single-cell RNA-seq data from CRISPRa/i screens. It handles perturbation deconvolution, quality control, dimensionality reduction (Monocle3), and trajectory analysis to assess the impact of guides on cell differentiation.
 
