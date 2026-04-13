@@ -1,5 +1,7 @@
 # Code repository for Sozza et al. "Combinatorial and Inducible CRISPRa/i Achieves Deterministic hiPSC Forward Programming and Iterative Refinement via Single-Cell Genomics"
 
+## DESCRIPTION:
+
 This GitHub repository includes all the code aiming to reproduce the analysis presented in the publication:
 1) scripts_fig5E contains the script of the scRNAseq data shown in Fig 5E. Primary data, input files, and processed data are deposited on Biostudies: Identification nb. XXXXXXX. Input files are also deposited on Zenodo Identification nb. XXXXXXX (Fig5_input_folder)
 2) scripts_fig5F contains the script of the bulk RNAseq data shown in Fig 5F. Primary data, input files, and processed data are deposited on Biostudies: Identification nb. XXXXXXX. Input files are also deposited on Zenodo Identification nb. XXXXXXX (Fig5F_input_folder)
