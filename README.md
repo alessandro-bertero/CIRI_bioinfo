@@ -8,7 +8,9 @@ This GitHub repository includes all the code aiming to reproduce the analysis pr
 
 It is suggested to run scrips 1-2-4 in a Docker environment. The Docker images used for these scripts are:
 
+
 hedgelab/rstudio-hedgelab:iPS2seq_new_cellranger7
+
 hedgelab/rstudio-hedgelab:iPS2seq_new_cellranger9
 
 These Images can run cellranger (either cellranger 7 or cellranger 9) on bash and the R codes on Rstudio server.
