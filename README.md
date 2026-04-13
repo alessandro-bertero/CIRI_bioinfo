@@ -1,4 +1,24 @@
-# CIRI Analysis Pipeline
+# Code repository for Sozza et al. "Combinatorial and Inducible CRISPRa/i Achieves Deterministic hiPSC Forward Programming and Iterative Refinement via Single-Cell Genomics"
+
+This GitHub repository includes all the code aiming to reproduce the analysis presented in the publication:
+1) scripts_fig5E contains the script of the scRNAseq data shown in Fig 5E. Primary data, input files, and processed data are deposited on Biostudies: Identification nb. XXXXXXX. Input files are also deposited on Zenodo Identification nb. XXXXXXX (Fig5_input_folder)
+2) scripts_fig5F contains the script of the bulk RNAseq data shown in Fig 5F. Primary data, input files, and processed data are deposited on Biostudies: Identification nb. XXXXXXX. Input files are also deposited on Zenodo Identification nb. XXXXXXX (Fig5F_input_folder)
+3) CIRI Analysis Pipeline is the pipeline complementing the CRISPR screening platform, aiming at identifying the genes and the combination of genes promoting forward programing. Figure 6 ans S6 show the graphs output of this analysis. Primary data, input files, and processed data are deposited on Biostudies: Identification nb. XXXXXXX XXXXXX. Input files are also deposited on Zenodo Identification nb. XXXXXXX (Fig6_dual_guides_INPUT_files and FigS6_single_guide_INPUT_files)
+4) scripts_fig7 contains the script of the scRNAseq data shown in Fig 7 and S7. Primary data, input files, and processed data are deposited on Biostudies: Identification nb. XXXXXXX. Input files are also deposited on Zenodo Identification nb. XXXXXXX (Fig7_input_folder)
+
+It is suggested to run scrips 1-2-4 in a Docker environment. The Docker images used for these scripts are:
+
+hedgelab/rstudio-hedgelab:iPS2seq_new_cellranger7
+hedgelab/rstudio-hedgelab:iPS2seq_new_cellranger9
+
+These Images can run cellranger (either cellranger 7 or cellranger 9) on bash and the R codes on Rstudio server.
+
+```docker run -d -itv /path/to/shared/folder:/scratch --privileged=true -p 8080:8787 --name container_name hedgelab/rstudio-hedgelab:iPS2seq_new_cellranger7```
+```docker exec -idt container_name rstudio-server start```
+then go on the browser http://localhost:8080/
+
+
+#CIRI Analysis Pipeline
 
 This repository contains an R-based pipeline for processing and analyzing single-cell RNA-seq data from CRISPRa/i screens. It handles perturbation deconvolution, quality control, dimensionality reduction (Monocle3), and trajectory analysis to assess the impact of guides on cell differentiation.
 
