@@ -1,0 +1,591 @@
+---
+title: "n1 AB017: QC and monocle Seurat objects creation"
+author: "Elisa Balmas PhD"
+date: "2026-04-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up environment
+
+```{r}
+#library(monocle3)
+library(mixtools)
+library(quantmod)
+library(tidyr)
+library(stringr)
+library(grid)
+library(viridis)
+library(viridisLite)
+library(ggthemes)
+library(dplyr)
+library(tidyverse)
+library(ggsignif)
+library(umap)
+library(heatmap3)
+library(plyr)
+library(edgeR)
+library(compareGroups)
+library(dbscan)
+library(MAST)
+library(geosphere)
+library(RColorBrewer)
+library(htmlwidgets)
+library(Matrix)
+library(tidyseurat)
+library(SeuratWrappers)
+#library(scMAGeCK)
+library(readxl)
+library(SparseArray)
+library(Seurat)
+#library(rCASC)
+#library(deepToolsUtils)
+#library(R.utils)
+library(sceptre)
+library(sceptredata)
+library(monocle3)
+
+
+library(ggplot2); library(reshape2); theme_set(theme_bw(26) + theme(panel.grid.major = element_blank(), 
+                                                                    panel.grid.minor = element_blank()) +
+                                                 theme(legend.key = element_blank()))
+update_geom_defaults("point", aes(size = 4))
+
+#setwd("/home/ebalmas/scpHUB/projects/H001AS7_iKDseq_10X_4tp_monocle/analysis_EB")
+
+# Session options
+options(stringsAsFactors = FALSE)
+set.seed(12345)
+
+# Set up the ggplot default params
+theme_set(theme_bw(12) + 
+          theme(panel.grid.major = element_blank(), 
+                panel.grid.minor = element_blank(),
+                plot.title = element_text(size=15, face="bold", margin = margin(10,0,10,0)),
+                axis.text.x = element_text(angle=45, hjust = 1)))
+
+
+#dir.create(file.path("Output","scratch"))
+
+
+fname_scratch <- file.path("scratch")
+
+#set up folder path QC
+dir.create(file.path("Output","dataset"))#create forders MONOCLE
+dir.create(file.path("Output","dataset","AB07"))
+dir.create(file.path("Output","dataset","AB07", format(Sys.Date(), "%y%m%d")))
+
+fname_prefix_AB07 <- file.path("Output","dataset","AB07", format(Sys.Date(), "%y%m%d"))
+
+#okabe_tab <- read_excel("scratch/color_scale.xlsx")
+#okabe_pal=okabe_tab$hex
+
+okabe_pal=c("#000000","#E69F00","#56B4E9","#CC79A7")
+
+
+```
+
+###load data
+```{r}
+load(paste0(getwd(),"/scratch/tmp_AB07.RData"))
+cds_AB07=cds
+
+ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes(color = monocle_clusters),
+               size = 0.8,alpha=0.7)+
+  labs(x = "UMAP 1", y = "UMAP 2", title = "replicate")+
+  scale_color_manual(name = "monocle",
+                        values=c(okabe_pal))+facet_wrap(~sample)
+#ggsave(filename = paste0(fname_prefix_UMAP, "_", "UMAP_samp.pdf"),
+ #    width = 12, height = 10)
+
+# Nice labels for x axis
+cluster_labels <- c(
+  "1" = "Myoblasts",
+  "2" = "Myocytes",
+  "3" = "Posterior neurectoderm",
+  "4" = "Mesenchymal Progenitors")
+
+col_tab=data.frame(monocle_clusters=c("1","2","3","4"), cluster=c("Myoblasts","Myocytes","Posterior neurectoderm","Mesenchymal Progenitors"),
+                   clust_color=okabe_pal)
+
+```
+
+#####make gene lists for muscle cell types
+
+
+```{r}
+gs <- list(
+
+  # ===============================
+  # CELL CYCLE / RIBOSOME TONE
+  # ===============================
+  cellcycle_s = c("MCM5","PCNA","TYMS","FEN1","MCM2","MCM4","RRM1","UNG","GINS2",
+                  "MCM6","CDCA7","DTL","PRIM1","UHRF1","HELLS","RFC2","RPA2","NASP",
+                  "RAD51","CHEK1","ORC6","MCM3","MCM7","MLF1IP","BRIP1","E2F8"),
+  # Ref: Seurat S.Score; Whitfield et al., Cell 2002; Trapnell et al., Nat Biotech 2014
+
+  cellcycle_g2m = c("HMGB2","CDK1","NUSAP1","UBE2C","BIRC5","TPX2","TOP2A","NDC80",
+                    "CKS2","NUF2","CKS1B","MKI67","TMPO","CENPF","TACC3","SMC4",
+                    "CCNB2","CKAP2L","CKAP2","AURKB","BUB1","KIF11","ANP32E","TUBB4B",
+                    "GTSE1","KIF20B","HJURP","CDCA3","CDC20","TTK","CDC45","CDC6",
+                    "EXO1","TIPIN","DSCC1","BLM","CASP8AP2","USP1","CLSPN","POLA1",
+                    "CHAF1B","BRCA1","EXOSC2","USP16","POLD3","MSH2","ATAD2","RAD51AP1","RRM2"),
+  # Ref: Seurat G2M.Score; Whitfield et al., Cell 2002; Trapnell 2014
+  
+  ribosome_tone = c("RPLP0","RPL3","RPL5","RPL7","RPL11","RPL13A","RPL23A",
+                    "RPS3","RPS6","RPS8","RPS12","RPS18","RPS27","NCL","FBL",
+                    "NPM1","EIF4EBP1","MYC","DDIT4"),
+  # Ref: Murgia et al. 2021; Chemello et al. 2025 (fiber proteome core)
+
+  # ===============================
+  # FIBER-TYPE / METABOLIC PROGRAMS
+  # ===============================
+  fiber_type_I_slow = c("MYH7","TNNI1","TNNT1","MYL2","ATP2A2","CKMT2","MB",
+                        "COX7A1","COX6A2","PPARGC1A","SDHA","CS","SLC25A4",
+                        "MYBPC1","MYL3","PDK4","ESRRA","NDUFA10"),
+  # Ref: Schiaffino & Reggiani 2011; Chemello et al. 2025; Murgia et al. 2021
+
+  fiber_type_IIa_fast = c("MYH2","TNNI2","TNNT3","MYL1","ATP2A1","ACTN3","TPM2",
+                          "PVALB","LDHA","PKM","PFKM","ENO1","PGAM2","ALDOA",
+                          "CKM","DMD","CASQ1"),
+  # Ref: Murgia et al. 2021; Bloemberg & Quadrilatero 2012; Chemello 2025
+
+  fiber_type_IIx_fast = c("MYH1","ACTN3","MYLK2","TNNT3","TNNI2","ATP2A1","TPM2",
+                          "CKM","LDHA","ENO1","PFKM","MYH4"),
+  # Ref: Murgia 2021; Uhlén et al., HPA 2021
+
+  developmental_embryonic_perinatal = c("MYH3","MYH8","MYL4","TNNI1","TNNT1",
+                                        "MYOG","MYOD1","MEF2C","DES","MYMK",
+                                        "MYMX","CHRNG","ACTA1","CKM"),
+  # Ref: Chal et al. 2015; Hicks et al. 2025; Sampath et al. 2018
+
+  sarcomere_core = c("TTN","NEB","ACTN2","TCAP","MYBPC1","MYBPC2","MYL1","MYL2",
+                     "TNNI1","TNNI2","TNNT1","TNNT3","TPM1","TPM2","MYOM1","MYOM2","CSRP3"),
+  # Ref: Lundberg et al. 2019; GO:0030016 "myofibril"
+
+  calcium_excitation_contraction = c("RYR1","CACNA1S","ATP2A1","ATP2A2","CASQ1",
+                                     "CASQ2","SLN","PLN","TRDN","STAC3","JPH1",
+                                     "CAMK2A","CAMK2B","CAV3"),
+  # Ref: Protasi et al. 2021; Jorgensen et al. 2023 (hiPSC EC coupling)
+
+  oxidative_mitochondrial = c("SDHA","SDHB","UQCRC1","NDUFA9","NDUFS1","COX4I1",
+                              "COX6A2","ATP5F1A","ATP5MC1","CKMT2","SLC25A4",
+                              "PPARGC1A","TFAM","CS","ACADM","NDUFB8","CYCS","PDHA1"),
+  # Ref: Lin et al. Nature 2002; Chemello et al. 2025; Murgia 2021
+
+  glycolytic_fast = c("HK2","PFKM","ALDOA","TPI1","GAPDH","PGK1","PGAM2","ENO1",
+                      "PKM","LDHA","PDK1","SLC2A4","PFKFB3","ENO3","MYL1"),
+  # Ref: Schiaffino & Reggiani 2011; Chemello 2025
+
+  # ===============================
+  # STEM / MYOGENIC LINEAGES
+  # ===============================
+  satellite_cell_core = c("PAX7","VCAM1","ITGA7","CXCR4","MYF5","CDH15","SDC4",
+                          "EGFR","NCAM1","SPRY1","MUSTN1","NOS1"),
+  # Ref: De Micheli et al. 2020; Yin et al. 2013; GSE143437 atlas
+
+  myoblast_proliferation_cycle = c("MYOD1","MYF5","MKI67","TOP2A","PCNA","CCNB1",
+                                   "CDK1","E2F1","NUSAP1","HMGB2","UBE2C","AURKB","RRM2"),
+  # Ref: Hicks et al. 2025; Trapnell et al. 2014 pseudotime
+
+  myotube_differentiation_fusion = c("MYOG","MEF2C","MYMK","MYMX","MYH3","MYH8",
+                                     "CKM","DES","DNM2","ACTA1"),
+  # Ref: Chal et al. 2015; Sampath et al. 2018; Hicks 2025
+
+  myogenic_regulators_axis = c("PAX3","PAX7","MYF5","MYOD1","MYOG","MEF2C","MYF6"),
+  # Ref: Weintraub 1991; Rudnicki et al. 1993
+
+  # ===============================
+  # NMJ / ECM / NICHE
+  # ===============================
+  neuromuscular_junction = c("AGRN","LRP4","MUSK","DOK7","RAPSN","COLQ","CHRNA1",
+                             "CHRNB1","CHRND","CHRNE","CHRNG","ACHE","UTRN"),
+  # Ref: Burden et al. 2018; Cantor et al. 2022 (hiPSC NMJ coculture)
+
+  muscle_ecm_basement = c("LAMA2","LAMC1","COL6A1","COL6A2","COL6A3","COL1A1",
+                          "COL1A2","COL3A1","FN1","SPP1","LUM","DCN","DAG1",
+                          "ITGA7","THY1","COL4A1","COL4A2","COL5A1"),
+  # Ref: De Micheli et al. 2020; Saini et al. 2021
+
+  fibro_adipogenic_progenitors = c("PDGFRA","COL1A1","COL3A1","DCN","LUM","CXCL14",
+                                   "THY1","GPC6","FBN1","DPT"),
+  # Ref: De Micheli 2020; Front Cell Dev Biol 2025
+
+  atrophy_stress = c("FBXO32","TRIM63","DDIT4","GADD45A","ATF4","FOXO3","PSMA1",
+                     "PSMB1","SESN1","SESN3","EIF4EBP1","PPP1R15A"),
+  # Ref: Bodine et al. 2001; Gomes et al. 2001; Milan et al. 2021
+
+  # ===============================
+  # PLURIPOTENCY → MYOGENIC (hiPSC/hESC)
+  # ===============================
+  pluripotency_core = c("POU5F1","NANOG","SOX2","PRDM14","DPPA2","DPPA4","ZFP42",
+                        "DNMT3A","DNMT3B"),
+  # Ref: Theunissen et al. 2016; Nichols & Smith 2012
+
+  naive_pluripotency = c("KLF17","KLF4","TFCP2L1","DNMT3L","DPPA3","TBX3","ESRRB","SUSD2"),
+  # Ref: Collier et al. 2022; Pastor et al. 2018
+
+  mesoderm_specification = c("MESP1","PDGFRA","KDR","ISL1","HAND1","HAND2","GATA4",
+                             "TBX5","NKX2-5","MEF2C","FGF8","EOMES","TBXT"),
+  # Ref: Chan et al. 2013; Loh et al. 2016; Hicks 2025
+
+  early_myogenic_commitment = c("PAX3","PAX7","MYF5","MYOD1","MET","ITGA7","FGFR4","LBX1","MYOG")
+  # Ref: Chal et al. 2015; Hicks et al. 2025
+)
+```
+
+####make plots
+
+```{r}
+for (sig_name in names(gs)) {
+  
+  message("Plotting gene set: ", sig_name)
+  
+  p <- plot_cells(
+    cds_AB07,
+    genes = gs[[sig_name]],
+    label_cell_groups = FALSE,
+    show_trajectory_graph = FALSE
+  ) +
+    labs(
+      x = "UMAP 1",
+      y = "UMAP 2",
+      title = sig_name
+    ) +
+    scale_color_viridis(option = "E", discrete = FALSE)
+  
+  print(p)
+  
+  ggsave(
+    filename = paste0(fname_prefix_AB07, "_UMAP_", sig_name, ".pdf"),
+    plot = p,
+    width = 8,
+    height = 6
+  )
+}
+```
+
+###convert to Seurat and add cell cycle feature
+
+```{r}
+#load("scratch/monocle_AB04.RData") #it was 251203_monocle_cds_clustered_FINAL.RData
+
+cell_metadata=as.data.frame(cds_AB07@colData@listData)
+seurat_AB07<-as.Seurat(cds_AB07, assay = NULL)
+###add cell cycle scores
+exp.mat <- read.table(file = "scratch/cell_cicle_reg_genes/nestorawa_forcellcycle_expressionMatrix.txt", header = TRUE, 
+    as.is = TRUE, row.names = 1)
+# We can# segregate this list into markers of G2/M phase and markers of S phase
+s.genes <- cc.genes$s.genes #s phase genes
+g2m.genes <- cc.genes$g2m.genes #G2phase genes
+
+# Use fewer bins than 24 (e.g. 10 or 5)
+seurat_AB07 <- CellCycleScoring(
+  seurat_AB07,
+  s.features   = s.genes,
+  g2m.features = g2m.genes,
+  set.ident    = TRUE,
+  nbin         = 20   # or 5 if your dataset is very small
+)
+
+colData(cds_AB07)$S_score=seurat_AB07@meta.data[["S.Score"]]
+colData(cds_AB07)$G2M_score=seurat_AB07@meta.data[["G2M.Score"]]
+colData(cds_AB07)$Phase=seurat_AB07@meta.data[["Phase"]]
+
+meta=as.data.frame(cds_AB07@colData@listData)###7603
+cell_metadata=meta
+
+meta_AB07=meta
+
+ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes(color = Phase),
+               size=0.8)+
+  labs(x = "UMAP 1", y = "UMAP 2", title = "cell cycle phase")+
+  scale_color_manual(name = "cell cycle phase",
+                        values=c("#56B4E9","#009E73","#D55E00"))#+facet_grid(~factor(sample_id,levels = c("E8_R2","E8_R3","M8_R2","M8_R3","B8_R2","B8_R3")))
+ggsave(filename = paste0(fname_prefix_AB07, "_", "UMAP_cellcycle_phase.pdf"),
+     width = 5, height = 5)
+  
+
+plot_feature=c("S_score", "G2M_score")
+
+for (feature in plot_feature) {
+  
+  p <- ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes_string(color = feature), size = 0.8) +
+    labs(
+      x = "UMAP 1",
+      y = "UMAP 2",
+      title = feature
+    ) +
+    scale_color_viridis(option = "E", discrete = FALSE) #+
+    #facet_grid(~sample_id)
+  
+  ggsave(
+    filename = paste0(fname_prefix_AB07, "_", "UMAP_", feature, ".pdf"),
+    plot = p,
+    width = 5,
+    height = 5
+  )
+}
+
+```
+
+###add features
+```{r}
+fix_features <- function(object, genes) {
+  present <- intersect(genes, rownames(object))
+  if (length(present) == 0L) warning("No genes found from set: ", paste(head(genes, 5), collapse=", "))
+  present
+}
+
+# Compute module scores for every set in `gs`
+for (nm in names(gs)) {
+  feats <- fix_features(seurat_AB07, gs[[nm]])
+  # skip empty sets
+  if (length(feats) == 0L) next
+  seurat_AB07 <- AddModuleScore(
+    object   = seurat_AB07,
+    features = list(feats),        # one set at a time
+    nbin = 20,                    # default is 24; adjust if needed
+    name     = paste0(nm, "_score")# Seurat will append "1"
+  )
+  # Move the created column <name>1 into a clean column <name>
+  raw_col <- paste0(nm, "_score1")
+  if (raw_col %in% colnames(seurat_AB07@meta.data)) {
+    seurat_AB07@meta.data[[nm]] <- seurat_AB07@meta.data[[raw_col]]
+    # optional: drop the generated column
+    seurat_AB07@meta.data[[raw_col]] <- NULL
+  }
+}
+
+common_cells <- intersect(colnames(seurat_AB07), colnames(cds))
+if (length(common_cells) == 0L) stop("No overlapping cells between Seurat and cds.")
+
+for (nm in names(gs)) {
+  if (nm %in% colnames(seurat_AB07@meta.data)) {
+    vec <- seurat_AB07@meta.data[common_cells, nm, drop=TRUE]
+    colData(cds)[common_cells, nm] <- vec
+  }
+}
+
+feat_to_plot <- c(names(gs))
+
+for (feat in feat_to_plot) {
+  if (!feat %in% colnames(colData(cds))) next
+  p <- plot_cells(
+    cds,
+    reduction_method   = "UMAP",
+    color_cells_by     = feat,
+    label_cell_groups  = TRUE,
+    show_trajectory_graph = FALSE
+  ) +
+    labs(title = feat, x = "UMAP 1", y = "UMAP 2") +
+    ggplot2::scale_color_viridis_c(option = "E")
+  ggsave(paste0(fname_prefix_AB07, "_UMAP_sign_", feat, ".pdf"), p, width = 4, height = 3)
+}
+
+meta=seurat_AB07@meta.data
+
+meta=meta%>%left_join(col_tab, by="monocle_clusters")
+meta <- seurat_AB07@meta.data
+meta$libID <- rownames(meta)
+
+anno <- meta %>%
+  dplyr::select(libID, monocle_clusters) %>%
+  dplyr::left_join(col_tab, by = "monocle_clusters")
+
+rownames(anno) <- anno$libID
+anno$libID <- NULL
+anno <- anno[colnames(seurat_AB07), , drop = FALSE]
+
+seurat_AB07 <- AddMetaData(seurat_AB07, metadata = anno)
+
+meta_AB07=anno
+```
+
+#####violin plots
+
+```{r}
+
+cluster_col <- c(
+  "Mesenchymal Progenitors"="#CC79A7",
+  "Myoblasts"="#000000",
+  "Myocytes"="#E69F00",
+  "Posterior neurectoderm"="#56B4E9")
+
+# ── violin plots for all module scores ─────────────────────────────────────
+
+# Colour palette (Okabe-Ito, 4 samples)
+samp_pal <- c(
+  "CIRI"    = "#E69F00",
+  "CRISPRa"  = "#D55E00"
+)
+
+# Nice labels for x axis
+cluster_labels <- c(
+  "1" = "Mesenchymal Progenitors",
+  "2" = "Myoblasts",
+  "3" = "Myocytes",
+  "4" = "Posterior neurectoderm")
+
+
+score_labels <- c(
+  sarcomere_core                 = "sarcomere core",
+  developmental_embryonic_perinatal = "developmental embryonic perinatal",
+  myotube_differentiation_fusion = "myotube differentiation & fusion",
+  myoblast_proliferation_cycle   = "myoblast proliferation cycle",
+  fiber_type_I_slow              = "fiber type I slow",
+  fiber_type_IIa_fast            = "fiber type IIa fast",
+  pluripotency_core              = "pluripotency core",
+  glycolytic_fast                = "glycolytic fast",
+  ribosome_tone                  = "ribosome tone",
+  calcium_excitation_contraction = "calcium excitation-contraction",
+  oxidative_mitochondrial        = "oxidative mitochondrial",
+  satellite_cell_core            = "satellite cell core",
+  myogenic_regulators_axis       = "myogenic regulators axis",
+  neuromuscular_junction         = "neuromuscular junction",
+  cellcycle_s                    = "cell cycle S phase",
+  cellcycle_g2m                  = "cell cycle G2/M"
+)
+
+# ── data ─────────────────────────────────────────────────────────────────────
+meta <- as.data.frame(seurat_AB07@meta.data)
+meta$monocle_clusters <- factor(meta$monocle_clusters, levels = as.character(1:9))
+
+
+# per-sample medians (for the coloured dots)
+sample_medians <- meta %>%
+  group_by(monocle_clusters, sample) %>%
+  summarise(across(all_of(names(score_labels)), median, na.rm = TRUE),
+            .groups = "drop")
+
+# named vector for scale_fill_manual: cluster -> colour
+violin_fill_pal  <- setNames(col_tab$clust_color, col_tab$monocle_clusters)
+
+# ── plot loop ─────────────────────────────────────────────────────────────────
+for (module in names(score_labels)) {
+
+  if (!module %in% colnames(meta)) next
+  message("Plotting: ", module)
+
+  med_long <- sample_medians %>%
+    dplyr::select(monocle_clusters, sample, value = all_of(module))
+
+  p <- ggplot(meta, aes(x = monocle_clusters, y = .data[[module]])) +
+
+    # violin: fill = cluster colour, white interior, coloured outline
+    geom_violin(
+      aes(fill = monocle_clusters, color = monocle_clusters),
+      alpha     = 0.25,       # light fill so dots remain visible
+      trim      = FALSE,
+      scale     = "width",
+      linewidth = 0.5
+    ) +
+
+    # coloured dots = per-sample median
+    geom_point(
+      data  = med_long,
+      aes(x = monocle_clusters, y = value, color = sample),
+      size     = 3,
+      shape    = 16,
+      position = position_jitter(width = 0.05, seed = 42)
+    ) +
+
+    # violin fill = cluster colours (light, alpha already set above)
+    scale_fill_manual(
+      values = violin_fill_pal,
+      guide  = "none"          # don't show fill in legend
+    ) +
+
+    # colour scale shared by violin outline AND sample dots
+    # we need two separate scales: one for violin outline, one for dots
+    # easiest: use fill for violin, colour for dots only
+    scale_color_manual(
+      values = samp_pal,
+      name   = "Condition",
+      breaks = names(samp_pal)   # only show sample colours in legend
+    ) +
+
+    scale_x_discrete(labels = cluster_labels) +
+
+    labs(
+      x     = "",
+      y     = "AddModuleScore",
+      title = score_labels[[module]]
+    ) +
+
+    theme_classic(base_size = 11) +
+    theme(
+      plot.background    = element_rect(fill = "white", color = NA),
+      panel.background   = element_rect(fill = "white", color = NA),
+      panel.grid.major.y = element_line(color = "#eeeeee", linewidth = 0.4),
+      panel.grid.major.x = element_blank(),
+      axis.line          = element_line(color = "#111111"),
+      axis.ticks         = element_line(color = "#111111"),
+      axis.text          = element_text(color = "#333333"),
+      axis.text.x        = element_text(angle = 40, hjust = 1, size = 9),
+      axis.title.y       = element_text(color = "#333333"),
+      plot.title         = element_text(color = "#111111", face = "bold", hjust = 0.5),
+      legend.background  = element_rect(fill = "white", color = NA),
+      legend.text        = element_text(color = "#333333"),
+      legend.title       = element_text(color = "#333333"),
+      legend.key         = element_rect(fill = "white", color = NA)
+    )
+
+  ggsave(
+    filename = paste0(fname_prefix_AB07, "_violin_", module, ".pdf"),
+    plot     = p,
+    width    = 6,
+    height   = 6
+  )
+}
+```
+
+
+###plot
+```{r}
+
+cluster_col <- c(
+  "Mesenchymal Progenitors"="#CC79A7",
+  "Myoblasts"="#000000",
+  "Myocytes"="#E69F00",
+  "Posterior neurectoderm"="#56B4E9")
+
+ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes(color = cluster),
+               size = 0.8,alpha=0.7)+
+  labs(x = "UMAP 1", y = "UMAP 2", title = "replicate")+
+  scale_color_manual(name = "monocle",
+                        values=c(cluster_col))+facet_wrap(~sample)
+
+
+
+```
+
+
+
+#########################################################
+######################SAVE DATA##########################
+#########################################################
+
+```{r}
+
+Rdata_filename = paste0(fname_prefix_AB07, "_seurat_AB07.RData")
+save(meta_AB07,seurat_AB07,
+     file = Rdata_filename)
+
+
+Rdata_filename = paste0(fname_prefix_AB07, "_seurat_monocle_AB07.RData")
+save(meta_AB07,seurat_AB07,cds_AB07,
+     file = Rdata_filename)
+
+####place them into the scratch folder, outputs from 09/04/2026 (eliminated date)
+```
+
+
+

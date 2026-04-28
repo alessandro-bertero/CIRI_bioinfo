@@ -1,0 +1,1105 @@
+---
+title: "n1 AB017: QC and monocle Seurat objects creation"
+author: "Elisa Balmas PhD"
+date: "2026-04-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up environment
+
+```{r}
+#library(monocle3)
+library(mixtools)
+library(quantmod)
+library(tidyr)
+library(stringr)
+library(grid)
+library(viridis)
+library(viridisLite)
+library(ggthemes)
+library(dplyr)
+library(tidyverse)
+library(ggsignif)
+library(umap)
+library(heatmap3)
+library(plyr)
+library(edgeR)
+library(compareGroups)
+library(dbscan)
+library(MAST)
+library(geosphere)
+library(RColorBrewer)
+library(htmlwidgets)
+library(Matrix)
+library(tidyseurat)
+library(SeuratWrappers)
+#library(scMAGeCK)
+library(readxl)
+library(SparseArray)
+library(Seurat)
+#library(rCASC)
+#library(deepToolsUtils)
+#library(R.utils)
+library(sceptre)
+library(sceptredata)
+library(monocle3)
+
+
+library(ggplot2); library(reshape2); theme_set(theme_bw(26) + theme(panel.grid.major = element_blank(), 
+                                                                    panel.grid.minor = element_blank()) +
+                                                 theme(legend.key = element_blank()))
+update_geom_defaults("point", aes(size = 4))
+
+#setwd("/home/ebalmas/scpHUB/projects/H001AS7_iKDseq_10X_4tp_monocle/analysis_EB")
+
+# Session options
+options(stringsAsFactors = FALSE)
+set.seed(12345)
+
+# Set up the ggplot default params
+theme_set(theme_bw(12) + 
+          theme(panel.grid.major = element_blank(), 
+                panel.grid.minor = element_blank(),
+                plot.title = element_text(size=15, face="bold", margin = margin(10,0,10,0)),
+                axis.text.x = element_text(angle=45, hjust = 1)))
+
+
+# Set up filename prefixes and output folders with the data
+dir.create("Output")
+#dir.create(file.path("Output","scratch"))
+
+
+dir.create(file.path("Output","QC"))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d")))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "csv"))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "R_objects"))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "ribomito"))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "filtering"))
+dir.create(file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "umap"))
+dir.create(file.path("Output","monocle"))
+dir.create(file.path("Output","monocle", format(Sys.Date(), "%y%m%d")))
+dir.create(file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "dotplot"))
+dir.create(file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "umap"))
+dir.create(file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "R_objects"))
+dir.create(file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "csv"))
+dir.create(file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "heatmap"))
+
+
+fname_scratch <- file.path("scratch")
+
+#set up folder path QC
+fname_prefix_R_QC <- file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "R_objects", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_csv_QC<-file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "csv", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_ribomito_QC <- file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "ribomito", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_filtering_QC <- file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "filtering", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_umap_QC <- file.path("Output","QC", format(Sys.Date(), "%y%m%d"), "umap", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_UMAP <- file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "umap", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_dotplot <- file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "dotplot", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_R <- file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "R_objects", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_csv <- file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "csv", 
+                               format(Sys.Date(), "%y%m%d"))
+fname_prefix_heatmap <- file.path("Output","monocle", format(Sys.Date(), "%y%m%d"), "heatmap", 
+                               format(Sys.Date(), "%y%m%d"))
+
+
+#okabe_tab <- read_excel("scratch/color_scale.xlsx")
+#okabe_pal=okabe_tab$hex
+
+okabe_pal=c("#E69F00","#56B4E9","#009E73","#f0E442","#0072B2","#D55E00","#CC79A7","#000000")
+
+
+pal <- c("#000000","#004949","#009292","#ff6db6","#ffb6db",
+         "#490092","#006ddb","#b66dff","#6db6ff","#b6dbff",
+         "#920000","#924900","#db6d00","#24ff24","#ffff6d")
+```
+
+###load data
+```{r}
+load(paste0(getwd(),"/scratch/scratch_protein_coding_genes.RData"))
+aggr_info <- read.csv(paste0(getwd(),"/scratch/aggregation.csv"))
+aggr_info$orig.ident=rownames(aggr_info)
+
+#load the RNA data in Seurat v5
+data <- Seurat::Read10X_h5(paste0(getwd(),"/scratch/filtered_feature_bc_matrix.h5"),unique.features = T)
+counts=data
+counts=counts[row.names(counts) %in% protein_coding_genes,]#filter for protein coding genes straight away
+
+
+```
+#create Seurat object
+
+```{r}
+# create a Seurat object containing the RNA data
+data_seurat <- CreateSeuratObject(
+  counts = counts,
+  assay = "RNA"
+)
+#sample_info$orig.ident=c("1","2","3")
+meta_original=data_seurat[[]]
+meta_original$libID=rownames(meta_original)
+
+meta_original=meta_original%>%dplyr::mutate(orig.ident=sapply(strsplit(as.character(libID), "-"), "[[", 2),
+lib_ID=sapply(strsplit(as.character(libID), "-"), "[[", 1))
+
+meta_original=meta_original%>%dplyr::right_join(aggr_info, by="orig.ident")
+rownames(meta_original)=meta_original$libID
+
+
+#update metadata 
+data_seurat<- AddMetaData(data_seurat, meta_original, col.name = NULL)
+#data_seurat <- subset(data_seurat, subset =libID%in%select)
+
+###select cells annotated with sgRNA from cellranger
+#select=rownames(cell_info)
+#update metadata and select for the cells annotated with sgRNA
+#data_seurat <- subset(data_seurat, subset =libID%in%select)
+#data_seurat<- AddMetaData(data_seurat, meta_original, col.name = NULL)
+
+pre_QCcounts=meta_original %>%dplyr::group_by(sample_id)%>%dplyr::summarise(count = n())
+write.csv(pre_QCcounts, file= paste0(fname_prefix_csv_QC, "_", "pre_QCcounts.csv"), row.names=T)
+
+print(pre_QCcounts)
+```
+
+#QC library
+####test QC cuts
+
+```{r}
+
+#explore variables:
+mito_set1=1
+mito_set2=15
+ribo_set=3
+nGene1=300
+nGene2=7000
+nUMIset=100
+
+#########calculate % of mitocondiral reads and ribosomal reads
+DefaultAssay(data_seurat) <- 'RNA'
+data_seurat[["percent.mt"]] <- PercentageFeatureSet(data_seurat, pattern = "^MT-")
+data_seurat[["percent.ribo"]] <- PercentageFeatureSet(data_seurat, pattern = "RPS")
+
+QC=data_seurat[[c("nFeature_RNA","percent.mt","nCount_RNA","percent.ribo","sample_id")]]
+
+#make a QC dataframe to plot the QC metrics and then use it as meta table for monocle
+QC <- QC %>%
+        dplyr::rename(nUMI = nCount_RNA,
+                      nGene = nFeature_RNA)
+QC$info=rownames(QC)
+QC$log10GenesPerUMI <- log10(QC$nGene) / log10(QC$nUMI)
+
+
+plot1 <- ggplot(QC, aes(x = sample_id, y = nGene, fill = sample_id)) +
+  geom_point(position = position_jitter(width = 0.2), size = 0.5, alpha = 0.5) +
+  geom_violin(scale = "width", alpha = 0.8) +
+  scale_fill_manual(values = okabe_pal) +
+  geom_hline(yintercept = nGene1, linetype = "dotted") +
+  geom_hline(yintercept = nGene2, linetype = "dotted")
+
+print(plot1)#nGene
+
+plot2 <- ggplot(QC, aes(x = sample_id, y = nUMI, fill = sample_id)) +
+  geom_point(position = position_jitter(width = 0.2), size = 0.5, alpha = 0.5) +
+  geom_violin(scale = "width", alpha = 0.8) +
+  geom_hline(yintercept = nUMIset, linetype = "dotted") +
+  scale_fill_manual(values = okabe_pal)
+
+print(plot2) #nUMI 
+
+#not cleaned for nb of UMI yet
+plot1 + plot2
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "feature_QC_old.pdf"),
+     width = 10, height = 8)
+
+###low UMI cut doesn't matter because gene cut is already cleaning those cells (as well as mito and ribo)
+QC %>% 
+  	ggplot(aes(color=sample_id, x=nUMI, fill= sample_id)) + 
+  	geom_density(alpha = 0.2) +scale_fill_manual(values =c(okabe_pal)) + 
+  	scale_x_log10() + 
+  	theme_classic() +
+  	ylab("Cell density") +
+  	geom_vline(xintercept = nUMIset)
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "UMI_QC.pdf"),
+     width = 10, height = 8)
+###n genes detected
+QC %>% 
+  	ggplot(aes(color=sample_id, x=nGene, fill= sample_id)) + 
+  	geom_density(alpha = 0.2) +scale_fill_manual(values =c(okabe_pal)) + 
+  	theme_classic() +
+  	scale_x_log10() + 
+  	geom_vline(xintercept = nGene1,linetype="dotted")+geom_vline(xintercept = nGene2,linetype="dotted") ###on the lower end cut was 200 but 00 or 350 is better
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "gene_det_QC.pdf"),
+     width = 10, height = 8)
+QC %>% 
+  	ggplot(aes(x=sample_id, y=log10(nGene), fill=sample_id)) + 
+  	geom_boxplot() +scale_fill_manual(values =c(okabe_pal)) + 
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  geom_hline(yintercept = log10(nGene1),linetype="dotted")+geom_hline(yintercept = log10(nGene2),linetype="dotted")+
+  	ggtitle("NCells vs NGenes")
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "gene_QC.pdf"),
+     width = 10, height = 8)
+QC %>% 
+  	ggplot(aes(x=nUMI, y=nGene, color=percent.mt)) + 
+  	geom_point(size=1.5,alpha = 0.5) + 
+	scale_colour_gradient(low = "gray90", high = "black") +
+  	stat_smooth(method=lm) +
+  	scale_x_log10() + 
+  	scale_y_log10() + 
+  	theme_classic() +
+  	geom_vline(xintercept = nUMIset) +
+  	geom_hline(yintercept = nGene1,linetype="dotted")+geom_hline(yintercept = nGene2,linetype="dotted")
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "gene_UMI_QC.pdf"),
+     width = 10, height = 8)
+
+QC %>% 
+  	ggplot(aes(x=nUMI, y=nGene, color=sample_id)) + 
+  	geom_point(size=1.5,alpha = 0.5) + scale_colour_manual(values =c(okabe_pal)) + 
+	#scale_colour_gradient(low = "gray90", high = "black") +
+  	stat_smooth(method=lm) +
+  	scale_x_log10() + 
+  	scale_y_log10() + 
+  	theme_classic() +
+  	geom_vline(xintercept = nUMIset) +
+  	geom_hline(yintercept = nGene1,linetype="dotted")+geom_hline(yintercept = nGene2,linetype="dotted")
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "gene_UMI_QC_sample_id.pdf"),
+     width = 10, height = 8)
+
+QC %>% 
+  	ggplot(aes(x=percent.ribo, y=percent.mt, color=sample_id)) + 
+  	geom_point(size=1.5,alpha = 0.5) + scale_colour_manual(values =c(okabe_pal)) +
+  	#stat_smooth(method=lm) +
+  	scale_x_log10() + 
+  	scale_y_log10() + 
+  	theme_classic() +
+  	geom_vline(xintercept = ribo_set,linetype="dotted")+#ribo
+  geom_hline(yintercept = mito_set2,linetype="dotted")+#mito
+   geom_hline(yintercept = mito_set1,linetype="dotted")#mito
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "percent_MT_RIBO_QC.pdf"),
+     width = 10, height = 8)
+
+QC %>%
+  	ggplot(aes(x=log10GenesPerUMI, color = sample_id, fill=sample_id)) +
+  	geom_density(alpha = 0.2) +
+  	theme_classic() +
+  	geom_vline(xintercept = 0.85)
+#rownames(QC)=QC$info
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "log10GenesPerUMI_QC.pdf"),
+     width = 10, height = 8)
+
+plot1 <- FeatureScatter(data_seurat, feature1 = "nCount_RNA", feature2 = "percent.mt",group.by = "sample_id")+
+  geom_hline(yintercept = mito_set2,linetype="dotted")+geom_hline(yintercept = 1,linetype="dotted")+ scale_colour_manual(values =c(okabe_pal))
+plot2 <- FeatureScatter(data_seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA",group.by = "sample_id")+
+  geom_hline(yintercept = nGene1,linetype="dotted")+geom_hline(yintercept = nGene2,linetype="dotted")+ scale_colour_manual(values =c(okabe_pal))
+plot3 <- FeatureScatter(data_seurat, feature1 = "percent.ribo", feature2 = "percent.mt",group.by = "sample_id")+geom_vline(xintercept = ribo_set,linetype="dotted")+
+  geom_hline(yintercept = mito_set2,linetype="dotted")+geom_hline(yintercept = mito_set1,linetype="dotted")+ scale_colour_manual(values =c(okabe_pal))
+plot1 + plot2+ plot3
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "all_QC_final.pdf"),
+     width = 20, height = 8)
+
+```
+#QC library
+####do filter cuts
+
+```{r}
+#SET variables:
+mito_set1=0
+mito_set2=10
+ribo_set=1
+nGene1=300
+nGene2=7000
+nUMIset=100
+######################################
+#FILTER CELLS by QC metrics 
+filtered_seurat <- subset(data_seurat, subset = nFeature_RNA>nGene1 & nFeature_RNA<nGene2 & nCount_RNA>nUMIset & percent.mt>=mito_set1 & percent.mt<mito_set2& percent.ribo>=ribo_set)
+
+metadata=filtered_seurat[[]]
+counts <- GetAssayData(object = filtered_seurat, slot = "counts")
+
+write.csv(counts, paste0(fname_prefix_csv_QC,"_silencing_matrix_all_samples_AB017.csv",sep=""))
+write.csv(metadata, paste0(fname_prefix_csv_QC,"_cell_metadata_filtered_AB017.csv",sep=""))
+
+post_QCcounts=metadata%>%dplyr::group_by(sample_id)%>%dplyr::summarise(count = n())
+post_QCcounts$tr_nGene=paste0(nGene1," genes per cell and less than ",nGene2)
+post_QCcounts$tr_n_count_UMI=paste0(nUMIset," UMI gene")
+post_QCcounts$tr_mito=paste0("more than or equal",mito_set1,"% and less than ",mito_set2,"%")
+post_QCcounts$tr_ribo=paste0("more than or equal",ribo_set,"%")
+colnames(pre_QCcounts)=c("sample_id","pre_QC_count")
+post_QCcounts=post_QCcounts%>%left_join(pre_QCcounts,by=c("sample_id"))
+post_QCcounts$lost=post_QCcounts$pre_QC_count-post_QCcounts$count
+write.csv(post_QCcounts, file= paste0(fname_prefix_csv_QC, "_", "post_QCcounts.csv"), row.names=T)
+
+#QCcounts=pre_QCcounts%>%right_join(post_QCcounts,by=c("sample_id"))
+#QCcounts=QCcounts%>%dplyr::rename(Pre_QC="count.x",Post_QC="count.y")
+#QCcounts$lost=QCcounts$Pre_QC-QCcounts$Post_QC
+#write.csv(QCcounts, file= paste0(fname_prefix_csv_QC, "_", "QCcounts.csv"), row.names=T)
+
+
+Rdata_filename = paste0(fname_prefix_R_QC, "_seurat_data_filtered.RData")
+save(meta_original, counts, metadata,filtered_seurat,aggr_info,
+     file = Rdata_filename)
+
+
+plot1 <- FeatureScatter(filtered_seurat, feature1 = "nCount_RNA", feature2 = "percent.mt",group.by = "sample_id")+
+  geom_vline(xintercept = nUMIset,linetype="dotted")+
+  geom_hline(yintercept = mito_set1,linetype="dotted")+
+  geom_hline(yintercept = mito_set2,linetype="dotted")+ scale_colour_manual(values =c(pal))
+
+plot2 <- FeatureScatter(filtered_seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA",group.by = "sample_id")+
+  geom_vline(xintercept = nUMIset,linetype="dotted")+
+  geom_hline(yintercept = nGene1,linetype="dotted")+
+  geom_hline(yintercept = nGene2,linetype="dotted")+ scale_colour_manual(values =c(pal))
+
+plot3 <- FeatureScatter(filtered_seurat, feature1 = "percent.ribo", feature2 = "percent.mt",group.by = "sample_id")+geom_vline(xintercept = 4,linetype="dotted")+
+  #geom_hline(yintercept = 1,linetype="dotted")+
+  geom_hline(yintercept = mito_set1,linetype="dotted")+
+  geom_hline(yintercept = mito_set2,linetype="dotted")+
+  scale_colour_manual(values =c(pal))
+
+plot1 + plot2+ plot3
+ggsave(filename = paste0(fname_prefix_ribomito_QC, "_", "all_QC_after_FILTER.pdf"),
+     width = 20, height = 8)
+```
+
+
+#add prepare data for Monocle
+
+```{r}
+####gather info from Seurat
+cell_metadata=metadata
+expression_matrix <- filtered_seurat@assays[["RNA"]]@layers[["counts"]]
+counts <- GetAssayData(object = filtered_seurat, slot = "counts")
+
+# get gene annotations
+gene_annotation=data.frame(rownames(counts))
+colnames(gene_annotation) <- "gene_short_name"
+rownames(gene_annotation)=gene_annotation$gene_short_name
+
+```
+
+####preprocess monocle data
+
+```{r}
+
+###create cds file
+cds <- new_cell_data_set(counts,cell_metadata = cell_metadata,
+                                      gene_metadata = gene_annotation)
+cds <- preprocess_cds(cds, num_dim = 30)
+#cds <- align_cds(cds, num_dim = 100, alignment_group = "sample")
+plot_pc_variance_explained(cds)
+
+ggsave(filename = paste0(fname_prefix_dotplot, "_", "variance.png"),
+     width = 12, height = 8)
+
+#cds <- align_cds(cds, alignment_group = "experiment")
+set.seed(678686)
+cds = reduce_dimension(cds,reduction_method="tSNE")
+#set.seed(79876858)
+cds = reduce_dimension(cds,umap.min_dist = 0.2,reduction_method="UMAP")
+#cds = reduce_dimension(cds,umap.min_dist = 0.5,reduction_method="UMAP")
+
+#monocle.object = order_cells(monocle.object, reduction_method = "UMAP")
+#set.seed(12345)
+cds_1 = cluster_cells(cds, resolution = 1e-2)
+colData(cds_1)$monocle_clusters = as.character(monocle3::clusters(cds_1))
+#set.seed(123479870)
+cds_2 = cluster_cells(cds, resolution = 1e-4)
+colData(cds_2)$monocle_clusters = as.character(monocle3::clusters(cds_2))
+#set.seed(123457768)
+#cds_3 = cluster_cells(cds, resolution = 5e-5)
+cds_3 = cluster_cells(cds, k=15, resolution = 2e-4)
+colData(cds_3)$monocle_clusters = as.character(monocle3::clusters(cds_3))
+#set.seed(123458980)
+cds_4 = cluster_cells(cds, resolution = 2e-4)
+colData(cds_4)$monocle_clusters = as.character(monocle3::clusters(cds_4))
+#set.seed(1234597698)
+cds_5 = cluster_cells(cds, resolution = 5e-4)
+colData(cds_5)$monocle_clusters = as.character(monocle3::clusters(cds_5))
+
+
+plot_cells(cds_1, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8)
+last_plot()+facet_grid(~sample_id)
+ggsave(filename = paste0(fname_prefix_UMAP, "_cds_1_monocle_clusters_resolution_1e_2.pdf"),
+     width = 20, height = 4)
+plot_cells(cds_2, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8)
+last_plot()+facet_grid(~sample_id)
+ggsave(filename = paste0(fname_prefix_UMAP, "_cds_2_monocle_clusters_resolution_1e_4.pdf"),
+     width = 20, height = 4)
+plot_cells(cds_3, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8)
+last_plot()+facet_grid(~sample_id)
+ggsave(filename = paste0(fname_prefix_UMAP, "_cds_3_monocle_clusters_resolution_2e_4_K15.pdf"),
+     width = 20, height = 4)
+plot_cells(cds_4, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8)
+last_plot()+facet_grid(~sample_id)
+ggsave(filename = paste0(fname_prefix_UMAP, "_cds_4_monocle_clusters_resolution_2e_4.pdf"),
+     width = 20, height = 4)
+plot_cells(cds_5, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8)
+last_plot()+facet_grid(~sample_id)
+ggsave(filename = paste0(fname_prefix_UMAP, "_cds_5_monocle_clusters_resolution_5e_4.pdf"),
+     width = 20, height = 4)
+
+plot_cells(cds_3, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8)
+ggsave(filename = paste0(fname_prefix_UMAP, "_cds_4_monocle_clusters_resolution_2e_4_K15_single.pdf"),
+     width = 4, height = 4)
+plot_cells(cds_4, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8)
+ggsave(filename = paste0(fname_prefix_UMAP, "_cds_4_monocle_clusters_resolution_2e_4_single.pdf"),
+     width = 4, height = 4)
+plot_cells(cds_5, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8)
+ggsave(filename = paste0(fname_prefix_UMAP, "_cds_5_monocle_clusters_resolution_5e_4_single.pdf"),
+     width = 4, height = 4)
+
+
+Rdata_filename = paste0(fname_prefix_R, "_monocle_cds_clustered.RData")
+save(cell_metadata, counts,cds, cds_1,
+     cds_2, cds_3, cds_4, cds_5,
+     file = Rdata_filename)
+```
+
+###chose the cluster iteration with better results and clean environment
+#either 3 or 4 
+
+```{r}
+plot_cells(cds_3, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8,show_trajectory_graph=F)
+#plot_cells(cds, color_cells_by="cluster", group_cells_by="cluster",group_label_size = 7, cell_size=0.8,show_trajectory_graph=F,label_cell_groups=F)
+#last_plot()+facet_grid(~sample_id)
+last_plot()+facet_grid(~sample_id)
+ggsave(filename = paste0(fname_prefix_UMAP, "_", "UMAP.pdf"),
+     width = 10, height = 5)
+
+#map by seurat clusters generated
+cds_3 <- learn_graph(cds_3)
+cds=cds_3#this is the iteration we decided to use
+
+#cds_cardio= cds[,cds@colData@listData[["monocle_clusters"]]=="5"|cds@colData@listData[["monocle_clusters"]]=="4"|cds@colData@listData[["monocle_clusters"]]=="3"|cds@colData@listData[["monocle_clusters"]]=="2"]
+
+cds@colData$samp=paste0(cds@colData$type,"_",cds@colData$media)
+
+Rdata_filename = paste0(fname_prefix_R, "_monocle_cds_clustered_FINAL.RData")
+save(cell_metadata, counts,cds,
+     file = Rdata_filename)
+
+#clean environment
+rm(combined_exp,data_exp5,expression_data,gene_annotation,expression_matrix,cds_1,cds_2,cds_3,cds_4,cds_5)
+```
+
+###select cds with protein coding genes
+#add umap data on cds meta
+#add pseudotime info
+
+```{r}
+#add UMAP data to cell_metadata
+pbuild <- plot_cells(cds, color_cells_by = "monocle_clusters", label_cell_groups=T, show_trajectory_graph = F, label_leaves=F, label_branch_points=F, graph_label_size=3, group_label_size = 4, cell_size = 1) 
+UmapCDS <- data.frame(pbuild$data$sample_name,UMAP1_monocle = pbuild$data$data_dim_1, UMAP2_monocle = pbuild$data$data_dim_2, row.names = 1) 
+colData(cds)$UMAP_1_monocle=pbuild$data$data_dim_1 #add umap data for further analysis outside monocle
+colData(cds)$UMAP_2_monocle=pbuild$data$data_dim_2 #add umap data for further analysis outside monocle
+
+original_counts=counts
+#counts=as.data.frame(exprs(cds))
+counts=as.data.frame(normalized_counts(cds))
+meta=as.data.frame(cds@colData@listData)
+
+#cds<- order_cells(cds,reduction_method = "UMAP")#selected around cluster 3
+
+#plot_cells(cds,
+ #          color_cells_by = "pseudotime",
+    #       label_cell_groups=FALSE,
+   #        label_leaves=FALSE,
+  #         label_branch_points=FALSE,
+ #          graph_label_size=1.5)
+#last_plot()+facet_grid(~sample)
+#ggsave(filename = paste0(fname_prefix_UMAP, "_", "UMAP_pseudotime.pdf"),
+ #    width = 18, height = 8)
+
+Rdata_filename = paste0(fname_prefix_R, "_monocle_cds_clustered_FINAL.RData")
+save(cell_metadata, counts,cds,meta,original_counts,
+     file = Rdata_filename)
+
+
+```
+
+###make graphs for clusters and features
+##clean up from a cluster before doing the last saving and Seurat?
+
+```{r}
+
+#eliminated cl7 since it is mainly cells with lower gene numbers
+
+#select all clusters except 7 from cds
+
+#cds= cds[,cds@colData@listData[["monocle_clusters"]]!="7"]
+
+original_counts=as.data.frame(exprs(cds))
+counts=as.data.frame(normalized_counts(cds))
+meta=as.data.frame(cds@colData@listData)
+
+
+#cl_pal=c("#000000","#004949", "#009E73", "#CC79A7", "#D55E00", "#f0E442", "#0072B2")
+
+cl_pal=c("#000000","#56B4E9", "#009E73","#004949","#24ff24", "#CC79A7", "#D55E00", "#f0E442", "#0072B2","#b6dbff","#ff6db6","#924900","#920000","#ffb6db")
+
+
+#cl_pal=c("#000000","#E69F00", "#009E73", "#CC79A7", "#D55E00", "#f0E442", "#0072B2")
+
+ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes(color = monocle_clusters),
+               size = 0.8,alpha=0.7)+
+  labs(x = "UMAP 1", y = "UMAP 2", title = "Monocle clusters")+
+  scale_color_manual(name = "monocle",
+                        values=c(cl_pal))
+ggsave(filename = paste0(fname_prefix_UMAP, "_", "UMAP.pdf"),
+     width = 5, height = 5)
+
+ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes(color = monocle_clusters),
+               size = 0.8,alpha=0.7)+
+  labs(x = "UMAP 1", y = "UMAP 2", title = "Monocle clusters")+
+  scale_color_manual(name = "monocle",
+                        values=c(cl_pal))+facet_wrap(~factor(samp,levels = c("WT_E8","WT_E6_FGF","NANOG_OVER_E8","NANOG_OVER_E6_FGF")))
+ggsave(filename = paste0(fname_prefix_UMAP, "_", "UMAP_monocle_clusters.pdf"),
+     width = 6, height = 6)
+
+
+ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes(color = monocle_clusters),
+               size = 0.8,alpha=0.7)+
+  labs(x = "UMAP 1", y = "UMAP 2", title = "replicate")+
+  scale_color_manual(name = "monocle",
+                        values=c(cl_pal))+facet_wrap(~sample_id)
+ggsave(filename = paste0(fname_prefix_UMAP, "_", "UMAP_samp.pdf"),
+     width = 12, height = 10)
+  
+plot_feature=c("percent.mt", "percent.ribo","nFeature_RNA","nCount_RNA")
+
+for (feature in plot_feature) {
+  
+  p <- ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes_string(color = feature), size = 0.8) +
+    labs(
+      x = "UMAP 1",
+      y = "UMAP 2",
+      title = feature
+    ) +
+    scale_color_viridis(option = "E", discrete = FALSE) #+
+    #facet_grid(~sample_id)
+  
+  ggsave(
+    filename = paste0(fname_prefix_umap_QC, "_", "UMAP_", feature, ".pdf"),
+    plot = p,
+    width = 5,
+    height = 5
+  )
+}
+
+####cluster 5 may be due to quality more than biology
+#cds= cds[,cds@colData@listData[["monocle_clusters"]]!="5"]
+#counts=as.data.frame(normalized_counts(cds))
+#meta=as.data.frame(cds@colData@listData)
+```
+
+
+###get top genes in a loop 
+
+```{r}
+marker_test_res = top_markers(cds, group_cells_by="monocle_clusters", reference_cells=NULL, cores=16)
+marker_test_res <- top_markers(cds, group_cells_by="monocle_clusters", 
+                               reference_cells=10000, cores=8)
+
+# List of top_n values to iterate through
+top_n_values <- c(2, 5, 10, 25)
+
+# Loop through each top_n value
+for (n in top_n_values) {
+  
+  # Filter markers and select the top_n genes
+  top_specific_markers <- marker_test_res %>%
+    filter(fraction_expressing >= 0.10) %>%
+    group_by(cell_group) %>%
+    top_n(n, pseudo_R2)
+  
+  # Extract unique gene IDs
+  top_specific_marker_ids <- unique(top_specific_markers %>% dplyr::pull(gene_id))
+  
+  # Create a data frame for the top genes
+  t_data <- data.frame(
+    ids = top_specific_markers$gene_id, 
+    cluster = top_specific_markers$cell_group, 
+    stringsAsFactors = FALSE
+  )
+  
+  # Write the data to a CSV file
+  write.csv(
+    t_data, 
+    file = paste0(fname_prefix_csv, "_", "top_", n, "genes_per_cluster.csv"), 
+    row.names = FALSE
+  )
+  
+  # Generate a heatmap plot
+  p <- plot_genes_by_group(
+    cds,
+    top_specific_marker_ids,
+    group_cells_by = "monocle_clusters",
+    ordering_type = "maximal_on_diag",
+    max.size = 3
+  ) + scale_color_viridis(option = "E", discrete = FALSE)
+  
+  # Save the plot
+  ggsave(
+    filename = paste0(fname_prefix_heatmap, "_", "top", n, "_heatmap.pdf"),
+    plot = p,
+    width = 8, 
+    height = ifelse(n == 5, 10, 25) # Adjust the height for larger plots
+  )
+}
+
+```
+
+
+##get top 10 genes per cluster
+
+```{r}
+
+marker_test_res = top_markers(cds, group_cells_by="monocle_clusters", reference_cells=NULL, cores=16)
+marker_test_res <- top_markers(cds, group_cells_by="monocle_clusters", 
+                               reference_cells=10000, cores=8)
+
+top_specific_markers <- marker_test_res %>%
+                            filter(fraction_expressing >= 0.10) %>%
+                            group_by(cell_group) %>%
+                            top_n(10, pseudo_R2)
+
+top_specific_marker_ids <- unique(top_specific_markers %>% dplyr::pull(gene_id))
+t10=data.frame(top_specific_markers$gene_id, top_specific_markers$cell_group, stringsAsFactors = F)
+colnames(t10)=c("ids", "cluster")
+
+write.csv(t10, file= paste0(fname_prefix_csv, "_", "top_10genes_per_cluster.CSV"), row.names=FALSE)
+
+plot_genes_by_group(cds,
+                    top_specific_marker_ids,
+                    group_cells_by="monocle_clusters",
+                    ordering_type="maximal_on_diag",
+                    max.size=3)+ scale_color_viridis(option="E", discrete=F)
+ggsave(filename = paste0(fname_prefix_heatmap, "_", "top10_heatmap.pdf"),
+     width = 8, height = 15)
+
+```
+
+##make graphs to visualize genes
+
+```{r}
+
+#load("scratch/monocle_AB04.RData") #it was 251124_monocle_cds_clustered_FINAL.RData
+
+plot_cells(cds,
+           genes = c("MB","MYOD1","MYOG","CDX2","PAX7","MYH7","MYH5","MYH4","DMD","SOX2","MKI67","AURKB"),
+            label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+     scale_color_viridis(option="E", discrete=F)
+ 
+ ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_my.pdf"),
+     width = 8, height = 6)
+
+plot_cells(cds,
+           genes = c("MKI67","PCNA","TOP2A","MCM5","CCNB1","CCNB2","CCNA2","CDC20","BIRC5","UBE2C","AURKA","AURKB"),
+            label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+     scale_color_viridis(option="E", discrete=F)
+ 
+ ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_proliferation.pdf"),
+     width = 8, height = 6)
+ 
+
+plot_cells(cds,
+           genes = c("SOX2","NODAL","SOX4","SOX3","ZIC1","BMP6","BMP4","BMP2","CDH1","EGFR","GATA6","FOX17","FOXA2","VIM","COL1A1"),
+           label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+     scale_color_viridis(option="E", discrete=F)
+   ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_transition.pdf"),
+     width = 8, height = 6)
+   
+plot_cells(cds,
+           genes = c("EOMES", "LEFTY1", "LEFY2", "NANOG", "GDF3", "MIXL1", "NODAL", "CER1", "FGF8", "HEY2", "SOX17", "GSC"),
+           label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+     scale_color_viridis(option="E", discrete=F)
+   ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_TGFbeta_targets.pdf"),
+     width = 8, height = 6)
+   
+plot_cells(cds,
+           genes = c("CDX2", "SMAD6", "WNT8A", "EGFLAM", "MEIS2", "CITED2", "SOX2", "GDF11", "NSUN7", "NDGR3", "HOXB2"),
+           label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+     scale_color_viridis(option="E", discrete=F)
+   ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_TGFbeta_neg.pdf"),
+     width = 8, height = 6)
+   
+plot_cells(cds,
+           genes = c("POU5F1", "WNT3", "PRDM14", "MYC", "POL3G", "DNM3B", "ETV5", "EPCAM", "DPPA4", "LZTS1", "FOXA2", "PCH1", "GLIPR1L1"),
+           label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+     scale_color_viridis(option="E", discrete=F)
+   ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_TGFbeta_nontargets.pdf"),
+     width = 8, height = 6)
+   
+plot_cells(cds,
+           genes = c("ZIC1", "KHDRBS2", "UNC5D", "SIX3", "ZNF528", "TFAP2C"),
+           label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+     scale_color_viridis(option="E", discrete=F)
+   ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_iPSCneuro.pdf"),
+     width = 8, height = 6)
+   
+plot_cells(cds,
+           genes = c("NODAL","ZIC1","LEFTY1","LEFTY2","CER1","EOMES","MIXL1","GSC","ZIC2","ZIC3","OTX2","SOX11","LHX2","SOX1","PAX6", "UNC5D","LRRC75A","ZNF138"),
+           label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+     scale_color_viridis(option="E", discrete=F)
+   ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_SMAD2_epi_meso_neuro.pdf"),
+     width = 8, height = 6)
+
+plot_cells(cds,
+           genes = c("SMARCD3"),
+           label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+  labs(
+      x = "UMAP 1",
+      y = "UMAP 2",
+      title = "SMARCD3 expression"
+    )+
+     scale_color_viridis(option="E", discrete=F)+facet_wrap(~sample_id)
+   ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_SMARCD3.pdf"),
+     width = 8, height = 6)
+   
+   plot_cells(cds,
+           genes = c("KDM6B"),
+           label_cell_groups = FALSE,
+            show_trajectory_graph = FALSE)+ 
+     labs(x = "UMAP 1", y = "UMAP 2", title = "")+
+  labs(
+      x = "UMAP 1",
+      y = "UMAP 2",
+      title = "JMJD3 expression"
+    )+
+     scale_color_viridis(option="E", discrete=F)+facet_wrap(~sample_id)
+   ggsave(filename = paste0(fname_prefix_dotplot, "_", "UMAP_JMJ.pdf"),
+     width = 8, height = 6)
+   
+   
+
+```
+#####make gene lists for muscle cell types
+
+
+```{r}
+gs <- list(
+
+  # ===============================
+  # CELL CYCLE / RIBOSOME TONE
+  # ===============================
+  cellcycle_s = c("MCM5","PCNA","TYMS","FEN1","MCM2","MCM4","RRM1","UNG","GINS2",
+                  "MCM6","CDCA7","DTL","PRIM1","UHRF1","HELLS","RFC2","RPA2","NASP",
+                  "RAD51","CHEK1","ORC6","MCM3","MCM7","MLF1IP","BRIP1","E2F8"),
+  # Ref: Seurat S.Score; Whitfield et al., Cell 2002; Trapnell et al., Nat Biotech 2014
+
+  cellcycle_g2m = c("HMGB2","CDK1","NUSAP1","UBE2C","BIRC5","TPX2","TOP2A","NDC80",
+                    "CKS2","NUF2","CKS1B","MKI67","TMPO","CENPF","TACC3","SMC4",
+                    "CCNB2","CKAP2L","CKAP2","AURKB","BUB1","KIF11","ANP32E","TUBB4B",
+                    "GTSE1","KIF20B","HJURP","CDCA3","CDC20","TTK","CDC45","CDC6",
+                    "EXO1","TIPIN","DSCC1","BLM","CASP8AP2","USP1","CLSPN","POLA1",
+                    "CHAF1B","BRCA1","EXOSC2","USP16","POLD3","MSH2","ATAD2","RAD51AP1","RRM2"),
+  # Ref: Seurat G2M.Score; Whitfield et al., Cell 2002; Trapnell 2014
+  
+  ribosome_tone = c("RPLP0","RPL3","RPL5","RPL7","RPL11","RPL13A","RPL23A",
+                    "RPS3","RPS6","RPS8","RPS12","RPS18","RPS27","NCL","FBL",
+                    "NPM1","EIF4EBP1","MYC","DDIT4"),
+  # Ref: Murgia et al. 2021; Chemello et al. 2025 (fiber proteome core)
+
+  # ===============================
+  # FIBER-TYPE / METABOLIC PROGRAMS
+  # ===============================
+  fiber_type_I_slow = c("MYH7","TNNI1","TNNT1","MYL2","ATP2A2","CKMT2","MB",
+                        "COX7A1","COX6A2","PPARGC1A","SDHA","CS","SLC25A4",
+                        "MYBPC1","MYL3","PDK4","ESRRA","NDUFA10"),
+  # Ref: Schiaffino & Reggiani 2011; Chemello et al. 2025; Murgia et al. 2021
+
+  fiber_type_IIa_fast = c("MYH2","TNNI2","TNNT3","MYL1","ATP2A1","ACTN3","TPM2",
+                          "PVALB","LDHA","PKM","PFKM","ENO1","PGAM2","ALDOA",
+                          "CKM","DMD","CASQ1"),
+  # Ref: Murgia et al. 2021; Bloemberg & Quadrilatero 2012; Chemello 2025
+
+  fiber_type_IIx_fast = c("MYH1","ACTN3","MYLK2","TNNT3","TNNI2","ATP2A1","TPM2",
+                          "CKM","LDHA","ENO1","PFKM","MYH4"),
+  # Ref: Murgia 2021; Uhlén et al., HPA 2021
+
+  developmental_embryonic_perinatal = c("MYH3","MYH8","MYL4","TNNI1","TNNT1",
+                                        "MYOG","MYOD1","MEF2C","DES","MYMK",
+                                        "MYMX","CHRNG","ACTA1","CKM"),
+  # Ref: Chal et al. 2015; Hicks et al. 2025; Sampath et al. 2018
+
+  sarcomere_core = c("TTN","NEB","ACTN2","TCAP","MYBPC1","MYBPC2","MYL1","MYL2",
+                     "TNNI1","TNNI2","TNNT1","TNNT3","TPM1","TPM2","MYOM1","MYOM2","CSRP3"),
+  # Ref: Lundberg et al. 2019; GO:0030016 "myofibril"
+
+  calcium_excitation_contraction = c("RYR1","CACNA1S","ATP2A1","ATP2A2","CASQ1",
+                                     "CASQ2","SLN","PLN","TRDN","STAC3","JPH1",
+                                     "CAMK2A","CAMK2B","CAV3"),
+  # Ref: Protasi et al. 2021; Jorgensen et al. 2023 (hiPSC EC coupling)
+
+  oxidative_mitochondrial = c("SDHA","SDHB","UQCRC1","NDUFA9","NDUFS1","COX4I1",
+                              "COX6A2","ATP5F1A","ATP5MC1","CKMT2","SLC25A4",
+                              "PPARGC1A","TFAM","CS","ACADM","NDUFB8","CYCS","PDHA1"),
+  # Ref: Lin et al. Nature 2002; Chemello et al. 2025; Murgia 2021
+
+  glycolytic_fast = c("HK2","PFKM","ALDOA","TPI1","GAPDH","PGK1","PGAM2","ENO1",
+                      "PKM","LDHA","PDK1","SLC2A4","PFKFB3","ENO3","MYL1"),
+  # Ref: Schiaffino & Reggiani 2011; Chemello 2025
+
+  # ===============================
+  # STEM / MYOGENIC LINEAGES
+  # ===============================
+  satellite_cell_core = c("PAX7","VCAM1","ITGA7","CXCR4","MYF5","CDH15","SDC4",
+                          "EGFR","NCAM1","SPRY1","MUSTN1","NOS1"),
+  # Ref: De Micheli et al. 2020; Yin et al. 2013; GSE143437 atlas
+
+  myoblast_proliferation_cycle = c("MYOD1","MYF5","MKI67","TOP2A","PCNA","CCNB1",
+                                   "CDK1","E2F1","NUSAP1","HMGB2","UBE2C","AURKB","RRM2"),
+  # Ref: Hicks et al. 2025; Trapnell et al. 2014 pseudotime
+
+  myotube_differentiation_fusion = c("MYOG","MEF2C","MYMK","MYMX","MYH3","MYH8",
+                                     "CKM","DES","DNM2","ACTA1"),
+  # Ref: Chal et al. 2015; Sampath et al. 2018; Hicks 2025
+
+  myogenic_regulators_axis = c("PAX3","PAX7","MYF5","MYOD1","MYOG","MEF2C","MYF6"),
+  # Ref: Weintraub 1991; Rudnicki et al. 1993
+
+  # ===============================
+  # NMJ / ECM / NICHE
+  # ===============================
+  neuromuscular_junction = c("AGRN","LRP4","MUSK","DOK7","RAPSN","COLQ","CHRNA1",
+                             "CHRNB1","CHRND","CHRNE","CHRNG","ACHE","UTRN"),
+  # Ref: Burden et al. 2018; Cantor et al. 2022 (hiPSC NMJ coculture)
+
+  muscle_ecm_basement = c("LAMA2","LAMC1","COL6A1","COL6A2","COL6A3","COL1A1",
+                          "COL1A2","COL3A1","FN1","SPP1","LUM","DCN","DAG1",
+                          "ITGA7","THY1","COL4A1","COL4A2","COL5A1"),
+  # Ref: De Micheli et al. 2020; Saini et al. 2021
+
+  fibro_adipogenic_progenitors = c("PDGFRA","COL1A1","COL3A1","DCN","LUM","CXCL14",
+                                   "THY1","GPC6","FBN1","DPT"),
+  # Ref: De Micheli 2020; Front Cell Dev Biol 2025
+
+  atrophy_stress = c("FBXO32","TRIM63","DDIT4","GADD45A","ATF4","FOXO3","PSMA1",
+                     "PSMB1","SESN1","SESN3","EIF4EBP1","PPP1R15A"),
+  # Ref: Bodine et al. 2001; Gomes et al. 2001; Milan et al. 2021
+
+  # ===============================
+  # PLURIPOTENCY → MYOGENIC (hiPSC/hESC)
+  # ===============================
+  pluripotency_core = c("POU5F1","NANOG","SOX2","PRDM14","DPPA2","DPPA4","ZFP42",
+                        "DNMT3A","DNMT3B"),
+  # Ref: Theunissen et al. 2016; Nichols & Smith 2012
+
+  naive_pluripotency = c("KLF17","KLF4","TFCP2L1","DNMT3L","DPPA3","TBX3","ESRRB","SUSD2"),
+  # Ref: Collier et al. 2022; Pastor et al. 2018
+
+  mesoderm_specification = c("MESP1","PDGFRA","KDR","ISL1","HAND1","HAND2","GATA4",
+                             "TBX5","NKX2-5","MEF2C","FGF8","EOMES","TBXT"),
+  # Ref: Chan et al. 2013; Loh et al. 2016; Hicks 2025
+
+  early_myogenic_commitment = c("PAX3","PAX7","MYF5","MYOD1","MET","ITGA7","FGFR4","LBX1","MYOG")
+  # Ref: Chal et al. 2015; Hicks et al. 2025
+)
+```
+
+####make plots
+
+```{r}
+for (sig_name in names(gs)) {
+  
+  message("Plotting gene set: ", sig_name)
+  
+  p <- plot_cells(
+    cds,
+    genes = gs[[sig_name]],
+    label_cell_groups = FALSE,
+    show_trajectory_graph = FALSE
+  ) +
+    labs(
+      x = "UMAP 1",
+      y = "UMAP 2",
+      title = sig_name
+    ) +
+    scale_color_viridis(option = "E", discrete = FALSE)
+  
+  print(p)
+  
+  ggsave(
+    filename = paste0(fname_prefix_dotplot, "_UMAP_", sig_name, ".pdf"),
+    plot = p,
+    width = 8,
+    height = 6
+  )
+}
+```
+
+
+###convert to Seurat and add cell cycle feature
+
+```{r}
+#load("scratch/monocle_AB04.RData") #it was 251203_monocle_cds_clustered_FINAL.RData
+
+cell_metadata=as.data.frame(cds@colData@listData)
+seurat_AB017<-as.Seurat(cds, assay = NULL)
+###add cell cycle scores
+exp.mat <- read.table(file = "scratch/cell_cicle_reg_genes/nestorawa_forcellcycle_expressionMatrix.txt", header = TRUE, 
+    as.is = TRUE, row.names = 1)
+# We can# segregate this list into markers of G2/M phase and markers of S phase
+s.genes <- cc.genes$s.genes #s phase genes
+g2m.genes <- cc.genes$g2m.genes #G2phase genes
+
+# Use fewer bins than 24 (e.g. 10 or 5)
+seurat_AB017 <- CellCycleScoring(
+  seurat_AB017,
+  s.features   = s.genes,
+  g2m.features = g2m.genes,
+  set.ident    = TRUE,
+  nbin         = 20   # or 5 if your dataset is very small
+)
+
+colData(cds)$S_score=seurat_AB017@meta.data[["S.Score"]]
+colData(cds)$G2M_score=seurat_AB017@meta.data[["G2M.Score"]]
+colData(cds)$Phase=seurat_AB017@meta.data[["Phase"]]
+
+meta=as.data.frame(cds@colData@listData)###7603
+cell_metadata=meta
+
+meta_AB017=meta
+
+ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes(color = Phase),
+               size=0.8)+
+  labs(x = "UMAP 1", y = "UMAP 2", title = "cell cycle phase")+
+  scale_color_manual(name = "cell cycle phase",
+                        values=c("#56B4E9","#009E73","#D55E00"))#+facet_grid(~factor(sample_id,levels = c("E8_R2","E8_R3","M8_R2","M8_R3","B8_R2","B8_R3")))
+ggsave(filename = paste0(fname_prefix_UMAP, "_", "UMAP_cellcycle_phase.pdf"),
+     width = 5, height = 5)
+  
+
+plot_feature=c("S_score", "G2M_score")
+
+for (feature in plot_feature) {
+  
+  p <- ggplot(meta, aes(x = UMAP_1_monocle, y = UMAP_2_monocle)) +
+    geom_point(aes_string(color = feature), size = 0.8) +
+    labs(
+      x = "UMAP 1",
+      y = "UMAP 2",
+      title = feature
+    ) +
+    scale_color_viridis(option = "E", discrete = FALSE) #+
+    #facet_grid(~sample_id)
+  
+  ggsave(
+    filename = paste0(fname_prefix_UMAP, "_", "UMAP_", feature, ".pdf"),
+    plot = p,
+    width = 5,
+    height = 5
+  )
+}
+
+```
+
+###add features
+```{r}
+fix_features <- function(object, genes) {
+  present <- intersect(genes, rownames(object))
+  if (length(present) == 0L) warning("No genes found from set: ", paste(head(genes, 5), collapse=", "))
+  present
+}
+
+# Compute module scores for every set in `gs`
+for (nm in names(gs)) {
+  feats <- fix_features(seurat_AB017, gs[[nm]])
+  # skip empty sets
+  if (length(feats) == 0L) next
+  seurat_AB017 <- AddModuleScore(
+    object   = seurat_AB017,
+    features = list(feats),        # one set at a time
+    nbin = 20,                    # default is 24; adjust if needed
+    name     = paste0(nm, "_score")# Seurat will append "1"
+  )
+  # Move the created column <name>1 into a clean column <name>
+  raw_col <- paste0(nm, "_score1")
+  if (raw_col %in% colnames(seurat_AB017@meta.data)) {
+    seurat_AB017@meta.data[[nm]] <- seurat_AB017@meta.data[[raw_col]]
+    # optional: drop the generated column
+    seurat_AB017@meta.data[[raw_col]] <- NULL
+  }
+}
+
+common_cells <- intersect(colnames(seurat_AB017), colnames(cds))
+if (length(common_cells) == 0L) stop("No overlapping cells between Seurat and cds.")
+
+for (nm in names(gs)) {
+  if (nm %in% colnames(seurat_AB017@meta.data)) {
+    vec <- seurat_AB017@meta.data[common_cells, nm, drop=TRUE]
+    colData(cds)[common_cells, nm] <- vec
+  }
+}
+
+feat_to_plot <- c(names(gs))
+
+for (feat in feat_to_plot) {
+  if (!feat %in% colnames(colData(cds))) next
+  p <- plot_cells(
+    cds,
+    reduction_method   = "UMAP",
+    color_cells_by     = feat,
+    label_cell_groups  = TRUE,
+    show_trajectory_graph = FALSE
+  ) +
+    labs(title = feat, x = "UMAP 1", y = "UMAP 2") +
+    ggplot2::scale_color_viridis_c(option = "E")
+  ggsave(paste0(fname_prefix_dotplot, "_UMAP_sign_", feat, ".pdf"), p, width = 4, height = 3)
+}
+```
+
+#########################################################
+######################SAVE DATA##########################
+#########################################################
+
+```{r}
+
+Rdata_filename = paste0(fname_prefix_R, "_monocle_seurat_cds_clustered_FINAL_AB017.RData")#latest is of 20/01/2026
+save(cell_metadata, counts,cds,meta,original_counts,seurat_AB017,gs,
+     file = Rdata_filename)
+Rdata_filename = paste0(fname_prefix_R, "_seurat_AB017.RData")
+save(meta,seurat_AB017,gs,
+     file = Rdata_filename)
+
+####place them into the scratch folder, outputs from 09/04/2026 (eliminated date)
+```
+
+
+
